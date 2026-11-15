@@ -1,0 +1,24 @@
+.gradle/
+.idea/
+*.iml
+local.properties
+build/
+**/build/
+*.apk
+*.aab
+server/data/
+.env
+**/.env
+.DS_Store
+
+# Confidential data: never publish tokens, keys or locations
+*.pk8
+*.p7b
+*.pem
+*.key
+*.keystore
+*.jks
+**/gps-logs/
+**/trip-history/
+**/secrets/
+*.log

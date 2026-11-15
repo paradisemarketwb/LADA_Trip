@@ -1,0 +1,8 @@
+{
+  "name": "lada-trip-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Authenticated Telegram event relay for LADA Trip",
+  "scripts": { "start": "node index.js", "test": "node --test" },
+  "engines": { "node": ">=20" }
+}

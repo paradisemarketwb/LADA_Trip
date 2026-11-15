@@ -33,18 +33,25 @@ public final class EngineeringActivity extends Activity {
         "android.car.permission.CAR_SPEED",
         "android.car.permission.CAR_ENERGY",
         "android.car.permission.CAR_POWERTRAIN",
+        "android.car.permission.CAR_POWER",
+        "android.car.permission.CAR_EXTERIOR_ENVIRONMENT",
+        "android.car.permission.CAR_ENGINE_DETAILED",
+        "android.car.permission.CAR_DIAGNOSTICS",
         "android.car.permission.CAR_MILEAGE",
         "android.car.permission.CAR_VENDOR_EXTENSION"
     };
     private VehicleProbe vehicle;
+    private CarSensorProbe sensors;
     private CanServiceProbe can;
     private final Handler handler=new Handler(Looper.getMainLooper());
-    private TextView permissionsView,vehicleView,canView,accessView;
+    private TextView permissionsView,vehicleView,sensorView,canView,accessView;
+    private final Runnable refreshTick=new Runnable(){@Override public void run(){refresh();handler.postDelayed(this,2000);}};
     private String pendingExport;
     private int dp(int n){return (int)(n*getResources().getDisplayMetrics().density+0.5f);}
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
         vehicle=new VehicleProbe(this,this::refresh);
+        sensors=new CarSensorProbe(this,this::refresh);
         can=new CanServiceProbe(this,this::refresh);
         draw();refresh();
     }
@@ -69,6 +76,12 @@ public final class EngineeringActivity extends Activity {
             vehicle.stop();vehicle=new VehicleProbe(this,this::refresh);vehicle.start();refresh();
         });
         vehicleView=label("Ожидание запуска",13);add(root,vehicleView);
+        add(root,label("ДОПОЛНИТЕЛЬНО · CAR SENSOR MANAGER",17));
+        add(root,label("Независимая проверка встроенных сенсоров Android Automotive. Сырые массивы значений без неподтверждённой расшифровки.",13));
+        button(root,"Проверить CarSensorManager",v->{
+            sensors.stop();sensors=new CarSensorProbe(this,this::refresh);sensors.start();refresh();
+        });
+        sensorView=label("Ожидание запуска",13);add(root,sensorView);
         add(root,label("УРОВЕНЬ 2 · YANDEX CAN",17));
         add(root,label("Только проверка exported/permission, bindService и AIDL-дескриптора. Никаких неизвестных транзакций CAN.",13));
         button(root,"Проверить CanService",v->can.start());
@@ -95,7 +108,7 @@ public final class EngineeringActivity extends Activity {
     private void refresh(){
         if(permissionsView==null)return;
         permissionsView.setText(permissionReport());
-        vehicleView.setText(vehicle.display());canView.setText(can.display());
+        vehicleView.setText(vehicle.display());sensorView.setText(sensors.display());canView.setText(can.display());
         accessView.setText("Accessibility: "+(isAccessibilityEnabled()?"включено":"выключено")+
             "\n"+EngineeringAccessibilityService.snapshot());
     }
@@ -144,11 +157,11 @@ public final class EngineeringActivity extends Activity {
     private JSONObject report(){
         JSONObject out=new JSONObject();
         try{
-            out.put("application","LADA Trip Engineering 0.2.0");
+            out.put("application","LADA Trip Engineering 0.3.0");
             out.put("time",new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ",Locale.US).format(new Date()));
             out.put("device_build",Build.DISPLAY);out.put("device_model",Build.MODEL);
             out.put("read_only",true);out.put("permission_report",permissionReport());
-            out.put("android_car",vehicle.snapshot());out.put("yandex_can",can.snapshot());
+            out.put("android_car",vehicle.snapshot());out.put("car_sensors",sensors.snapshot());out.put("yandex_can",can.snapshot());
             out.put("accessibility_enabled",isAccessibilityEnabled());
             out.put("accessibility_readings",EngineeringAccessibilityService.snapshot());
             out.put("gps_trip_unmodified",true);
@@ -172,6 +185,7 @@ public final class EngineeringActivity extends Activity {
         }
     }
     private void toast(String msg){Toast.makeText(this,msg,Toast.LENGTH_LONG).show();}
-    @Override protected void onResume(){super.onResume();refresh();}
-    @Override protected void onDestroy(){vehicle.stop();can.stop();super.onDestroy();}
+    @Override protected void onResume(){super.onResume();handler.removeCallbacks(refreshTick);handler.post(refreshTick);}
+    @Override protected void onPause(){handler.removeCallbacks(refreshTick);super.onPause();}
+    @Override protected void onDestroy(){handler.removeCallbacks(refreshTick);vehicle.stop();sensors.stop();can.stop();super.onDestroy();}
 }

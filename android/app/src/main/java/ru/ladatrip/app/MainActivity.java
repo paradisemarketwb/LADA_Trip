@@ -101,8 +101,8 @@ public final class MainActivity extends Activity {
 
         LinearLayout export=card(root,"ЭКСПОРТ НА USB И ДИАГНОСТИКА");
         export.addView(text("Нажмите экспорт, затем в системном окне Android выберите USB-накопитель. Доступ root не нужен.",13,MUTED,false),lp(4,12));
-        Button summary=button("Журнал поездок  ·  CSV",false);export.addView(summary,lp(0,8));
-        summary.setOnClickListener(v->save("lada-trip-summary.csv","text/csv",store.exportTripsCsv()));
+        Button exportTrips=button("Журнал поездок  ·  CSV",false);export.addView(exportTrips,lp(0,8));
+        exportTrips.setOnClickListener(v->save("lada-trip-summary.csv","text/csv",store.exportTripsCsv()));
         Button stops=button("Журнал остановок  ·  CSV",false);export.addView(stops,lp(0,8));
         stops.setOnClickListener(v->save("lada-trip-stops.csv","text/csv",store.exportStopsCsv()));
         Button csv=button("Все GPS-точки  ·  CSV",false);export.addView(csv,lp(0,8));csv.setOnClickListener(v->save("lada-trip-points.csv","text/csv",store.exportCsv()));

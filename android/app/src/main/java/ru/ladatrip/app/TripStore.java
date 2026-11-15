@@ -184,6 +184,7 @@ public final class TripStore extends SQLiteOpenHelper {
             j.put("system_build",android.os.Build.DISPLAY);
             // Точная геопозиция, токены и URL не экспортируются в диагностику.
         }catch(Exception ignored){}
-        return j.toString(2);
+        try { return j.toString(2); }
+        catch (org.json.JSONException ex) { return j.toString(); }
     }
 }

@@ -236,6 +236,11 @@ public final class VehicleProbe {
             final Class<?> iface=register.getParameterTypes()[0];
             if(listenerProxy==null){
                 listenerProxy=Proxy.newProxyInstance(iface.getClassLoader(),new Class<?>[]{iface},(proxy,method,args)->{
+                    if(method.getDeclaringClass()==Object.class){
+                        if(method.getName().equals("hashCode"))return System.identityHashCode(proxy);
+                        if(method.getName().equals("equals"))return args!=null&&args.length>0&&proxy==args[0];
+                        if(method.getName().equals("toString"))return "LadaTripSensorListener";
+                    }
                     if(method.getName().equals("onChangeEvent")&&args!=null&&args.length>0&&args[0]!=null){
                         Object value=args[0];
                         try{

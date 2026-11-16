@@ -36,12 +36,19 @@ jobs:
           test -x "$SDKMANAGER"
           yes | "$SDKMANAGER" --licenses > /dev/null || true
           "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
-      - name: Build debug APK
+      - name: Build both debug APKs
         working-directory: android
-        run: gradle --no-daemon --stacktrace --console plain assembleDebug
+        run: gradle --no-daemon --stacktrace --console plain :app:assembleDebug :probe:assembleDebug
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: app-debug
           path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+      - name: Upload standalone CAN Probe
+        uses: actions/upload-artifact@v4
+        with:
+          name: can-probe-test-apk
+          path: android/probe/build/outputs/apk/debug/probe-debug.apk
           if-no-files-found: error

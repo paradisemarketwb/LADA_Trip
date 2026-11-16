@@ -5,6 +5,8 @@ import android.app.AlertDialog;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.PackageInfo;
+import android.content.pm.ActivityInfo;
 import android.content.pm.PermissionInfo;
 import android.graphics.Color;
 import android.os.Build;
@@ -29,6 +31,8 @@ import java.util.Locale;
 /** Opt-in engineering diagnostics; never sends car commands or changes GPS recorder. */
 public final class EngineeringActivity extends Activity {
     private static final int PERMISSION_CODE=510, EXPORT_CODE=511;
+    private static final String HUMAX_ENGINEERING="com.humaxdigital.avtovaz.engineeringmode";
+    private String engineeringEntryStatus="Не проверено";
     private static final String[] CAR_PERMISSIONS={
         "android.car.permission.CAR_SPEED",
         "android.car.permission.CAR_ENERGY",
@@ -44,7 +48,7 @@ public final class EngineeringActivity extends Activity {
     private CarSensorProbe sensors;
     private CanServiceProbe can;
     private final Handler handler=new Handler(Looper.getMainLooper());
-    private TextView permissionsView,vehicleView,sensorView,canView,accessView;
+    private TextView permissionsView,vehicleView,sensorView,canView,accessView,engineeringEntryView;
     private final Runnable refreshTick=new Runnable(){@Override public void run(){refresh();handler.postDelayed(this,2000);}};
     private String pendingExport;
     private int dp(int n){return (int)(n*getResources().getDisplayMetrics().density+0.5f);}
@@ -87,17 +91,16 @@ public final class EngineeringActivity extends Activity {
         button(root,"Проверить CanService",v->can.start());
         canView=label("Ожидание запуска",13);add(root,canView);
         add(root,label("УРОВЕНЬ 3 · ИНЖЕНЕРНОЕ МЕНЮ",17));
-        add(root,label("Необязательный резерв. Требует отдельного ручного включения Accessibility; читает только доступный текст инженерного меню Humax, без автоматического открытия и нажатий.",13));
+        add(root,label("Необязательный резерв. Accessibility включается вручную; читает только текст штатного инженерного меню Humax. RPM и пробег можно увидеть, только если они представлены доступными текстовыми полями.",13));
+        add(root,label("Activity Launcher не обходит ограничения Android: неэкспортируемые Activity недоступны стороннему APK.",12));
         button(root,"Открыть настройки доступности Android",v->{
             try{startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));}
             catch(Exception e){toast("Настройки недоступны: "+VehicleProbe.describe(e));}
         });
-        button(root,"Открыть инженерное меню CAN вручную",v->{
-            Intent i=new Intent().setComponent(new ComponentName(
-                "com.humaxdigital.avtovaz.engineeringmode",
-                "com.humaxdigital.avtovaz.engineeringmode.can.CanInfoActivity"));
-            try{startActivity(i);}catch(Exception e){toast("Инженерное меню недоступно стороннему APK: "+VehicleProbe.describe(e));}
-        });
+        button(root,"Проверить доступность инженерной HomeActivity",v->checkEngineeringHome(false));
+        button(root,"Открыть HomeActivity, если разрешено Android",v->checkEngineeringHome(true));
+        engineeringEntryView=label("Вход в инженерное меню не проверен",12);add(root,engineeringEntryView);
+        add(root,label("Если вход закрыт: открой штатное инженерное приложение из системы или через Activity Launcher, если тот сможет запустить экспортированную Activity. Найди CAN Info, RPM и одометр на экране, затем вернись в LADA Trip.",12));
         button(root,"Показать считанные значения меню",v->refresh());
         accessView=label("Ожидание",13);add(root,accessView);
         add(root,label("ОТЧЁТ И ТЕСТИРОВАНИЕ",17));
@@ -105,10 +108,53 @@ public final class EngineeringActivity extends Activity {
         button(root,"Сохранить инженерный отчёт JSON на USB",v->export());
         add(root,label("Не использовать как прибор безопасности или для управления автомобилем. Единицы топлива и доступность свойств требуют проверки.",12));
     }
+    private void checkEngineeringHome(boolean launch){
+        try{
+            PackageInfo pkg=getPackageManager().getPackageInfo(HUMAX_ENGINEERING,PackageManager.GET_ACTIVITIES);
+            ActivityInfo home=null;
+            int count=0;
+            StringBuilder exported=new StringBuilder();
+            if(pkg.activities!=null){
+                for(ActivityInfo info:pkg.activities){
+                    if(info.name.endsWith(".HomeActivity")||info.name.equals("HomeActivity"))home=info;
+                    if(info.exported){
+                        count++;
+                        if(exported.length()<450)exported.append(info.name).append("; ");
+                    }
+                }
+            }
+            if(home==null){
+                engineeringEntryStatus="HomeActivity не найдена. Экспортировано Activity: "+count+
+                    "\\n"+(exported.length()==0?"Доступные входы не обнаружены":exported.toString());
+                if(launch)toast("HomeActivity не найдена в установленной прошивке");
+            }else{
+                boolean permissionOK=home.permission==null||
+                    checkSelfPermission(home.permission)==PackageManager.PERMISSION_GRANTED;
+                boolean allowed=home.exported&&permissionOK;
+                engineeringEntryStatus="HomeActivity: "+home.name+
+                    "\\nexported="+home.exported+"; permission="+
+                    (home.permission==null?"нет":home.permission)+"; permissionGranted="+permissionOK+
+                    "; launchAllowed="+allowed;
+                if(launch){
+                    if(!allowed)toast("Android запрещает прямой запуск HomeActivity");
+                    else{
+                        try{
+                            startActivity(new Intent().setComponent(new ComponentName(home.packageName,home.name)));
+                            engineeringEntryStatus+="\\nЗапуск запрошен пользователем";
+                        }catch(Exception ex){engineeringEntryStatus+="\\nОшибка запуска: "+VehicleProbe.describe(ex);toast("Не удалось открыть инженерное меню");}
+                    }
+                }
+            }
+        }catch(PackageManager.NameNotFoundException ex){
+            engineeringEntryStatus="Пакет инженерного меню отсутствует в PackageManager";
+        }catch(Exception ex){engineeringEntryStatus="Не удалось проверить: "+VehicleProbe.describe(ex);}
+        if(engineeringEntryView!=null)engineeringEntryView.setText(engineeringEntryStatus);
+    }
     private void refresh(){
         if(permissionsView==null)return;
         permissionsView.setText(permissionReport());
         vehicleView.setText(vehicle.display());sensorView.setText(sensors.display());canView.setText(can.display());
+        if(engineeringEntryView!=null)engineeringEntryView.setText(engineeringEntryStatus);
         accessView.setText("Accessibility: "+(isAccessibilityEnabled()?"включено":"выключено")+
             "\n"+EngineeringAccessibilityService.snapshot());
     }
@@ -157,13 +203,15 @@ public final class EngineeringActivity extends Activity {
     private JSONObject report(){
         JSONObject out=new JSONObject();
         try{
-            out.put("application","LADA Trip Engineering 0.3.0");
+            out.put("application","LADA Trip Engineering 0.4.0");
             out.put("time",new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ",Locale.US).format(new Date()));
             out.put("device_build",Build.DISPLAY);out.put("device_model",Build.MODEL);
             out.put("read_only",true);out.put("permission_report",permissionReport());
             out.put("android_car",vehicle.snapshot());out.put("car_sensors",sensors.snapshot());out.put("yandex_can",can.snapshot());
             out.put("accessibility_enabled",isAccessibilityEnabled());
             out.put("accessibility_readings",EngineeringAccessibilityService.snapshot());
+            out.put("accessibility_structured",EngineeringAccessibilityService.snapshotJson());
+            out.put("engineering_home_activity",engineeringEntryStatus);
             out.put("gps_trip_unmodified",true);
             out.put("caveat","Only a device test can confirm accessible automotive values. No secrets/GPS history exported.");
         }catch(Exception ignored){}return out;

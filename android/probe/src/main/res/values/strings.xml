@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">CAN Probe Test</string>
+    <string name="accessibility_description">Read-only logging of vehicle values visible in the Humax engineering menu. Records changes only during a manually started test.</string>
+</resources>

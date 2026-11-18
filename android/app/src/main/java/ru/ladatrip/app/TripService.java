@@ -45,6 +45,10 @@ public final class TripService extends Service implements LocationListener {
         startForeground(MONITOR_ID,createNotification("Ожидание координат GPS"));
         subscribeGps();
         subscribeNetwork();
+        if(getSharedPreferences("vehicle_live_settings",MODE_PRIVATE).getBoolean("auto_with_gps",false)){
+            try{startForegroundService(new Intent(this,VehicleLiveService.class));}
+            catch(Exception e){android.util.Log.w("LadaTrip","Vehicle monitor autostart failed",e);}
+        }
     }
     private Notification createNotification(String status) {
         Intent open=new Intent(this,MainActivity.class);

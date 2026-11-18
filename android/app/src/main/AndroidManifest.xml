@@ -22,6 +22,8 @@
         android:label="LADA Trip" android:theme="@style/TripTheme" android:icon="@drawable/ic_trip">
         <uses-library android:name="android.car" android:required="false" />
         <activity android:name=".EngineeringActivity" android:exported="false" android:screenOrientation="portrait" />
+        <activity android:name=".VehicleDashboardActivity" android:exported="false" android:screenOrientation="portrait" />
+        <service android:name=".VehicleLiveService" android:exported="false" />
         <service android:name=".EngineeringAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:exported="true">
             <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>

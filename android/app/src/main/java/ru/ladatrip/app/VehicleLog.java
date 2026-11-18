@@ -20,7 +20,7 @@ public final class VehicleLog extends SQLiteOpenHelper {
         "GEAR","HANDBRAKE","REVERSE","ENGINE","STEER_RAW",
         "TAIL_GATE","HOOD","DRIVER_DOOR","PASSENGER_DOOR",
         "REAR_LEFT_DOOR","REAR_RIGHT_DOOR","ALARM",
-        "RPM","ODOMETER"
+        "RPM","COOLANT_C","ODOMETER"
     };
     public VehicleLog(Context c){super(c,"lada_vehicle_live.db",null,1);}
     @Override public void onCreate(SQLiteDatabase d){
@@ -53,6 +53,8 @@ public final class VehicleLog extends SQLiteOpenHelper {
         if("sensor".equals(source)&&"property".equals(oldSource)&&now-oldAt<10000)return;
         if("sensor".equals(source)&&"ui".equals(oldSource)&&now-oldAt<10000)return;
         if("ui".equals(source)&&"property".equals(oldSource)&&now-oldAt<10000)return;
+        if("elm".equals(source)&&"property".equals(oldSource)&&now-oldAt<10000)return;
+        if("ui".equals(source)&&"elm".equals(oldSource)&&now-oldAt<10000)return;
         boolean changed=!clean.equals(old)||!source.equals(oldSource);
         sp.edit().putString("value/"+signal,clean).putString("source/"+signal,source)
             .putLong("at/"+signal,now).apply();

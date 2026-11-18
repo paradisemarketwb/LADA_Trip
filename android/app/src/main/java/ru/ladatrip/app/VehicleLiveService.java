@@ -42,6 +42,7 @@ public final class VehicleLiveService extends Service {
         new Signal("HANDBRAKE",0x11200402,"CAR_POWERTRAIN"),
         new Signal("OUTSIDE_C",0x11600703,"CAR_EXTERIOR_ENVIRONMENT"),
         new Signal("RPM",0x11600305,"CAR_ENGINE_DETAILED"),
+        new Signal("COOLANT_C",0x11600301,"CAR_ENGINE_DETAILED"),
         new Signal("ODOMETER",0x11600204,"CAR_MILEAGE"),
         new Signal("STEER_RAW",0x2140F006,"CAR_VENDOR_EXTENSION"),
         new Signal("REVERSE",0x2140F003,"CAR_VENDOR_EXTENSION")
@@ -184,7 +185,7 @@ public final class VehicleLiveService extends Service {
         if(raw instanceof Number){
             double number=((Number)raw).doubleValue();
             if("SPEED".equals(name))return String.format(Locale.US,"%.1f",number*3.6);
-            if("FUEL_L".equals(name)||"OUTSIDE_C".equals(name))
+            if("FUEL_L".equals(name)||"OUTSIDE_C".equals(name)||"COOLANT_C".equals(name))
                 return String.format(Locale.US,"%.1f",number);
             if("IGNITION".equals(name))return String.valueOf(((Number)raw).intValue());
             return String.valueOf(raw);

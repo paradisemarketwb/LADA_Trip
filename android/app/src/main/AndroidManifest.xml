@@ -7,6 +7,9 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.BLUETOOTH" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
+    <uses-permission android:name="android.car.permission.CAR_ENGINE_DETAILED_3P" />
     <uses-feature android:name="android.hardware.type.automotive" android:required="false" />
     <!-- The system may expose these permissions with different levels on different OEM builds. -->
     <uses-permission android:name="android.car.permission.CAR_SPEED" />
@@ -24,6 +27,7 @@
         <activity android:name=".EngineeringActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".VehicleDashboardActivity" android:exported="false" android:screenOrientation="portrait" />
         <service android:name=".VehicleLiveService" android:exported="false" />
+        <service android:name=".EngineElmService" android:exported="false" />
         <service android:name=".EngineeringAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:exported="true">
             <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>

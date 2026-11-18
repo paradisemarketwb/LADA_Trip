@@ -1,6 +1,11 @@
 package ru.ladatrip.app;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import org.json.JSONObject;
+import java.util.Set;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.PermissionInfo;
@@ -41,7 +46,8 @@ public final class VehicleDashboardActivity extends Activity {
     private final Handler handler=new Handler(Looper.getMainLooper());
     private final java.util.Map<String,TextView> fields=new java.util.LinkedHashMap<>();
     private final java.util.Map<String,TextView> meta=new java.util.LinkedHashMap<>();
-    private TextView speedText,speedMeta,stateText;
+    private TextView speedText,speedMeta,stateText,elmStatus,auditStatus;
+    private volatile JSONObject latestEngineAudit;
     private String pendingExport;
     private final Runnable tick=new Runnable(){@Override public void run(){refresh();handler.postDelayed(this,1500);}};
     private int dp(float f){return (int)(f*getResources().getDisplayMetrics().density+0.5f);}
@@ -110,8 +116,34 @@ public final class VehicleDashboardActivity extends Activity {
         LinearLayout extra=card(root,false);
         extra.addView(text("ДОПОЛНИТЕЛЬНЫЕ ПАРАМЕТРЫ",12,BLUE,true));
         field(extra,"RPM","Обороты","об/мин");
+        field(extra,"COOLANT_C","Температура двигателя (ОЖ)","°C");
         field(extra,"ODOMETER","Общий пробег","км");
-        extra.addView(text("RPM, одометр и другие защищённые сигналы показываются только при фактическом получении. Отсутствие разрешения не маскируется нулями.",12,GREY,false));
+        extra.addView(text("Обороты и ОЖ: сначала проверяем штатный CarService без адаптера. На R2 доступ CAR_ENGINE_DETAILED обычно защищён; отсутствие данных отображается прочерком.",12,GREY,false));
+        Button inspect=button("Проверить RPM/ОЖ через штатную систему",true);
+        extra.addView(inspect,margin(10,3));
+        inspect.setOnClickListener(v->auditEngine());
+        auditStatus=text("Диагностика двигателя ещё не запускалась",12,GREY,false);
+        extra.addView(auditStatus,margin(3,6));
+        Button exportAudit=button("Экспорт проверки двигателя · JSON",false);
+        extra.addView(exportAudit,margin(4,10));
+        exportAudit.setOnClickListener(v->{
+            JSONObject j=latestEngineAudit;
+            if(j==null){toast("Сначала запусти проверку RPM/ОЖ");return;}
+            export("lada-engine-sources.json","application/json",j.toString());
+        });
+        extra.addView(text("РЕЗЕРВ · BLUETOOTH ELM327 (НЕОБЯЗАТЕЛЬНО)",12,BLUE,true));
+        extra.addView(text("Если штатная R2 блокирует RPM и ОЖ, можно использовать уже имеющийся ELM327: стандартные PID 010C и 0105. Для остальных данных адаптер не нужен. Не подключаемся автоматически.",12,GREY,false));
+        Button elmStart=button("Выбрать сопряжённый ELM327",false);
+        extra.addView(elmStart,margin(7,3));
+        elmStart.setOnClickListener(v->chooseElm());
+        Button elmStop=button("Отключить ELM327",false);
+        extra.addView(elmStop,margin(4,3));
+        elmStop.setOnClickListener(v->{
+            startService(new Intent(this,EngineElmService.class).setAction(EngineElmService.ACTION_STOP));
+            toast("Соединение ELM327 остановлено");
+        });
+        elmStatus=text("ELM327 не подключён",12,GREY,false);
+        extra.addView(elmStatus,margin(4,6));
 
         LinearLayout settings=card(root,false);
         settings.addView(text("НАСТРОЙКИ МОНИТОРИНГА",12,BLUE,true));
@@ -138,6 +170,8 @@ public final class VehicleDashboardActivity extends Activity {
         Button json=button("Сохранить отчёт JSON",false);
         exports.addView(json);json.setOnClickListener(v->export("lada-trip-vehicle.json","application/json",VehicleLog.exportJson(this).toString()));
         exports.addView(text("Значения записываются при изменении и периодически. Экспорт не включает GPS-координаты и не отправляется в сеть.",12,GREY,false));
+        String prior=getSharedPreferences("engine_audit",MODE_PRIVATE).getString("last_report",null);
+        if(prior!=null)try{latestEngineAudit=new JSONObject(prior);}catch(Exception ignored){}
         refresh();
     }
     private LinearLayout.LayoutParams margin(int top,int bottom){
@@ -164,6 +198,7 @@ public final class VehicleDashboardActivity extends Activity {
         long now=System.currentTimeMillis();
         boolean running=VehicleLog.running(this);
         stateText.setText((running?"● Чтение включено · ":"○ Чтение выключено · ")+VehicleLog.state(this));
+        if(elmStatus!=null)elmStatus.setText("Bluetooth ELM327: "+EngineElmService.state(this));
         String speed=VehicleLog.value(this,"SPEED");
         long age=VehicleLog.at(this,"SPEED");
         boolean fresh=age>0 && now-age<12000;
@@ -198,6 +233,61 @@ public final class VehicleDashboardActivity extends Activity {
             "ui".equals(source)?"Engineering UI":source;
         long age=Math.max(0,(now-timestamp)/1000);
         return by+" · "+age+" с назад"+(age>12?" · устарело":"");
+    }
+    private void auditEngine(){
+        if(auditStatus!=null)auditStatus.setText("Проверяем разрешения, CarPropertyManager и CarSensorManager...");
+        new Thread(()->{
+            JSONObject report=EngineAccessAudit.inspect(getApplicationContext());
+            latestEngineAudit=report;
+            getSharedPreferences("engine_audit",MODE_PRIVATE).edit().putString("last_report",report.toString()).apply();
+            runOnUiThread(()->{
+                if(auditStatus==null)return;
+                String details;
+                try{
+                    JSONObject permissions=report.optJSONObject("permissions");
+                    JSONObject car=report.optJSONObject("android_automotive");
+                    JSONObject props=car==null?null:car.optJSONObject("properties");
+                    boolean granted=permissions!=null&&permissions.optJSONObject("CAR_ENGINE_DETAILED")!=null&&
+                        permissions.optJSONObject("CAR_ENGINE_DETAILED").optBoolean("granted");
+                    details="CAR_ENGINE_DETAILED: "+(granted?"разрешено":"не выдано")+
+                        "\nCarService: "+(car==null?"не проверено":car.optString("connection","ошибка"));
+                    if(props!=null){
+                        JSONObject rpm=props.optJSONObject("RPM"),ct=props.optJSONObject("COOLANT_C");
+                        details+="\nRPM: "+(rpm==null?"не проверено":rpm.optString("read","см. отчёт"))+
+                            "\nОЖ: "+(ct==null?"не проверено":ct.optString("read","см. отчёт"));
+                    }
+                    details+="\nПодробности сохраняются в JSON.";
+                }catch(Exception ex){details="Проверка завершена. Сохрани JSON.";}
+                auditStatus.setText(details);
+            });
+        },"LadaTripEngineAudit").start();
+    }
+    private void chooseElm(){
+        BluetoothAdapter adapter=BluetoothAdapter.getDefaultAdapter();
+        if(adapter==null){toast("Bluetooth недоступен в магнитоле");return;}
+        if(!adapter.isEnabled()){toast("Включи Bluetooth в системных настройках");return;}
+        Set<BluetoothDevice> paired;
+        try{paired=adapter.getBondedDevices();}
+        catch(SecurityException e){toast("Доступ к Bluetooth запрещён системой");return;}
+        if(paired==null||paired.isEmpty()){
+            toast("Сначала сопряги ELM327 в настройках Android магнитолы");
+            return;
+        }
+        final java.util.List<BluetoothDevice> choices=new java.util.ArrayList<>(paired);
+        String[] names=new String[choices.size()];
+        for(int i=0;i<choices.size();i++){
+            BluetoothDevice b=choices.get(i);
+            String name=b.getName();
+            names[i]=(name==null?"Неизвестное BT устройство":name)+"  ["+b.getAddress()+"]";
+        }
+        new AlertDialog.Builder(this).setTitle("Выбери ELM327 (Bluetooth SPP)")
+            .setItems(names,(dialog,index)->{
+                BluetoothDevice device=choices.get(index);
+                Intent i=new Intent(this,EngineElmService.class);
+                i.putExtra(EngineElmService.EXTRA_ADDRESS,device.getAddress());
+                try{startForegroundService(i);toast("Подключение к ELM327 запрошено");}
+                catch(Exception ex){toast("Не удалось подключиться: "+ex.getClass().getSimpleName());}
+            }).setNegativeButton("Отмена",null).show();
     }
     private void startVehicle(){
         requestAvailablePermissions();

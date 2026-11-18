@@ -51,6 +51,7 @@ public final class VehicleLog extends SQLiteOpenHelper {
         long oldAt=sp.getLong("at/"+signal,0);
         // Prefer the direct Android automotive property when it is currently available.
         if("sensor".equals(source)&&"property".equals(oldSource)&&now-oldAt<10000)return;
+        if("sensor".equals(source)&&"ui".equals(oldSource)&&now-oldAt<10000)return;
         if("ui".equals(source)&&"property".equals(oldSource)&&now-oldAt<10000)return;
         boolean changed=!clean.equals(old)||!source.equals(oldSource);
         sp.edit().putString("value/"+signal,clean).putString("source/"+signal,source)

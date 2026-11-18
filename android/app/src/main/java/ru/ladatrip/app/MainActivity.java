@@ -93,6 +93,12 @@ public final class MainActivity extends Activity {
             store.queue("location",f,0,0);DeliveryJob.schedule(this);toast("Сообщение поставлено в очередь");refresh();
         });
 
+        LinearLayout car=card(root,"АВТОМОБИЛЬ · LIVE");
+        car.addView(text("Скорость, топливо, наружная температура, зажигание и доступные CAN-статусы. Данные записываются локально и отображаются с указанием источника.",13,MUTED,false));
+        Button live=button("Открыть автомобильную панель  →",true);
+        car.addView(live,lp(12,0));
+        live.setOnClickListener(v->startActivity(new Intent(this,VehicleDashboardActivity.class)));
+
         LinearLayout engineering=card(root,"ИНЖЕНЕРНАЯ ВЕРСИЯ");
         engineering.addView(text("Автомобильные свойства, разрешения, CAN-сервис и инженерное меню — только чтение.\nGPS и Telegram работают отдельно.",13,MUTED,false));
         Button probe=button("LADA Vehicle Probe  →",true);
@@ -109,7 +115,7 @@ public final class MainActivity extends Activity {
         Button gpx=button("Маршруты  ·  GPX",false);export.addView(gpx,lp(0,8));gpx.setOnClickListener(v->save("lada-trip-routes.gpx","application/gpx+xml",store.exportGpx()));
         Button diagnostic=button("Диагностический отчёт  ·  JSON",false);export.addView(diagnostic);
         diagnostic.setOnClickListener(v->save("lada-trip-diagnostics.json","application/json",store.exportDiagnostics(this)));
-        root.addView(text("LADA Trip Engineering 0.2 · независимое приложение · Android 9",12,MUTED,false),lp(20,0));
+        root.addView(text("LADA Trip v0.5 · GPS + данные автомобиля · Android 9",12,MUTED,false),lp(20,0));
         refresh();
     }
     private LinearLayout row(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.HORIZONTAL);return l;}

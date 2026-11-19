@@ -2,6 +2,7 @@ package ru.ladatrip.app;
 
 import android.accessibilityservice.AccessibilityService;
 import android.os.Handler;
+import android.graphics.Rect;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.view.accessibility.AccessibilityEvent;
@@ -66,17 +67,18 @@ public final class EngineeringAccessibilityService extends AccessibilityService 
         try{
             CharSequence pkg=root.getPackageName();
             if(pkg==null||!TARGET.contentEquals(pkg))return;
-            List<String> nodes=new ArrayList<>();
-            collect(root,0,nodes);
-            // Only accept verified label/value pairs; never treat headers as door states.
-            Map<String,String> found=HumaxCanTextParser.parse(nodes);
+            List<HumaxCanTextParser.TextCell> cells=new ArrayList<>();
+            collect(root,0,cells);
+            // OEM displays identical strings for multiple doors; keep every text node.
+            // Correlate by screen row, rather than treating the next section header as a value.
+            Map<String,String> found=HumaxCanTextParser.parseCells(cells);
             List<String> latest=new ArrayList<>();
             for(Map.Entry<String,String> entry:found.entrySet()){
                 VehicleLog.put(this,"ui",entry.getKey(),entry.getValue(),"Humax EngineeringMode: visible text");
                 latest.add(entry.getKey()+" = "+entry.getValue());
             }
             synchronized(EngineeringAccessibilityService.class){
-                lastAt=System.currentTimeMillis();lastNodeCount=nodes.size();
+                lastAt=System.currentTimeMillis();lastNodeCount=cells.size();
                 lastReadings.clear();lastReadings.addAll(latest);
                 lastSnapshot=latest.isEmpty()?"Текст автомобиля не доступен этому экрану":
                     android.text.TextUtils.join("\n",latest);
@@ -85,18 +87,31 @@ public final class EngineeringAccessibilityService extends AccessibilityService 
             android.util.Log.w("LadaVehicle","Accessibility read only scan failed",ex);
         }finally{root.recycle();}
     }
-    private static void add(List<String> list,CharSequence text){
-        if(text==null||list.size()>=200)return;
-        String s=text.toString().replace('\r',' ').replace('\n',' ').trim();
-        if(s.length()>0&&s.length()<=160 && !list.contains(s))list.add(s);
+    private static void add(List<HumaxCanTextParser.TextCell> cells,
+                            CharSequence text,Rect bounds){
+        if(text==null||cells.size()>=250)return;
+        String v=text.toString().replace('\r',' ').replace('\n',' ').trim();
+        if(v.length()>0&&v.length()<=160){
+            // Repeated "Close (1)" across different doors MUST NOT be de-duplicated.
+            // De-duplicate only genuinely identical nodes with identical geometry.
+            for(HumaxCanTextParser.TextCell existing:cells){
+                if(existing.text.equals(v)&&existing.left==bounds.left&&existing.top==bounds.top
+                    &&existing.right==bounds.right&&existing.bottom==bounds.bottom)return;
+            }
+            cells.add(new HumaxCanTextParser.TextCell(v,bounds.left,bounds.top,bounds.right,bounds.bottom));
+        }
     }
-    private static void collect(AccessibilityNodeInfo node,int depth,List<String> nodes){
-        if(node==null||depth>16||nodes.size()>=200)return;
-        add(nodes,node.getText());
-        add(nodes,node.getContentDescription());
-        for(int i=0;i<node.getChildCount()&&nodes.size()<200;i++){
+    private static void collect(AccessibilityNodeInfo node,int depth,
+                                List<HumaxCanTextParser.TextCell> cells){
+        if(node==null||depth>16||cells.size()>=250)return;
+        Rect bounds=new Rect();
+        node.getBoundsInScreen(bounds);
+        add(cells,node.getText(),bounds);
+        add(cells,node.getContentDescription(),bounds);
+        for(int i=0;i<node.getChildCount()&&cells.size()<250;i++){
             AccessibilityNodeInfo child=node.getChild(i);
-            if(child!=null)try{collect(child,depth+1,nodes);}finally{child.recycle();}
+            if(child!=null)try{collect(child,depth+1,cells);}
+            finally{child.recycle();}
         }
     }
     @Override public void onInterrupt(){}

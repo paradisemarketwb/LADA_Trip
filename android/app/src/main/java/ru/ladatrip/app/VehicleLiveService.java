@@ -175,7 +175,9 @@ public final class VehicleLiveService extends Service {
                 if(raw==null)continue;
                 String display=formatProperty(signal.name,raw);
                 VehicleLog.put(this,"property",signal.name,display,
-                    "ID=0x"+Integer.toHexString(signal.id)+"; direct CarPropertyManager");
+                    "ID=0x"+Integer.toHexString(signal.id)+
+                        ("SPEED".equals(signal.name)?"; Humax R2 raw km/h (NO extra x3.6)":
+                        "; direct CarPropertyManager"));
             }catch(Throwable t){
                 android.util.Log.w("LadaVehicle","Property "+signal.name+" unavailable: "+describe(t));
             }
@@ -184,7 +186,9 @@ public final class VehicleLiveService extends Service {
     private static String formatProperty(String name,Object raw){
         if(raw instanceof Number){
             double number=((Number)raw).doubleValue();
-            if("SPEED".equals(name))return String.format(Locale.US,"%.1f",number*3.6);
+            // R2 Humax VHAL returns a speed matching km/h despite the AOSP m/s contract.
+            // Road test: previous 122.5 in-app was 34.0 raw x 3.6, while dashboard showed 38.
+            if("SPEED".equals(name))return String.format(Locale.US,"%.1f",number);
             if("FUEL_L".equals(name)||"OUTSIDE_C".equals(name)||"COOLANT_C".equals(name))
                 return String.format(Locale.US,"%.1f",number);
             if("IGNITION".equals(name))return String.valueOf(((Number)raw).intValue());
@@ -219,9 +223,15 @@ public final class VehicleLiveService extends Service {
                     value=String.format(Locale.US,"%.1f",((Number)data).doubleValue()*3.6);
                 else if(("FUEL_L".equals(signal.name))&&data instanceof Number)
                     value=String.format(Locale.US,"%.1f",((Number)data).doubleValue());
+                else if("HANDBRAKE".equals(signal.name) && data instanceof Number){
+                    int raw=((Number)data).intValue();
+                    value=raw==1?"Затянут":raw==0?"Отпущен":"Неизвестный код "+raw;
+                }
                 else value=String.valueOf(data);
                 VehicleLog.put(this,"sensor",signal.name,value,
-                    "CarSensorManager.getLatestSensorEvent("+signal.id+"); raw enum for gear/brake");
+                    "CarSensorManager.getLatestSensorEvent("+signal.id+"); "+
+                        ("HANDBRAKE".equals(signal.name)?"parking intValues[0] 1=applied,0=not applied; raw="+data:
+                        "raw sensor data="+data));
             }catch(Throwable t){android.util.Log.d("LadaVehicle","Sensor "+signal.name+" unavailable: "+describe(t));}
         }
     }

@@ -8,8 +8,8 @@ android {
         applicationId 'ru.ladatrip.app'
         minSdk 28
         targetSdk 28 // штатная Android 9; для публикации в Play нужно пересмотреть
-        versionCode 7
-        versionName '0.7.0-vehicle-gps'
+        versionCode 8
+        versionName '0.8.0-vehicle-fixes'
     }
 
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }

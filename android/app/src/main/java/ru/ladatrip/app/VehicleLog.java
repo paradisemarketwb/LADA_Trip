@@ -81,7 +81,7 @@ public final class VehicleLog extends SQLiteOpenHelper {
     public static JSONObject exportJson(Context c){
         JSONObject root=new JSONObject();
         try{
-            root.put("version","LADA Trip 0.5 vehicle");
+            root.put("version","LADA Trip 0.8 vehicle");
             root.put("model",android.os.Build.MODEL);root.put("build",android.os.Build.DISPLAY);
             root.put("export_at_ms",System.currentTimeMillis());
             root.put("monitor_running",running(c));root.put("connection",state(c));
@@ -109,7 +109,7 @@ public final class VehicleLog extends SQLiteOpenHelper {
                 }
             }
             root.put("events",events);
-            root.put("note","UI-only values require the OEM engineering screen to be visible and Accessibility enabled. Raw steering values are not degrees.");
+            root.put("note","Humax R2 speed uses direct raw km/h with no extra x3.6. UI-only values require the OEM CAN Information screen to be visible and Accessibility enabled; last captured UI values may be stale. Raw steering values are not degrees.");
         }catch(Exception e){try{root.put("export_error",e.toString());}catch(Exception ignored){}}
         return root;
     }

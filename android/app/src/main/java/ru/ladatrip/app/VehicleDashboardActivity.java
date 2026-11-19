@@ -103,9 +103,10 @@ public final class VehicleDashboardActivity extends Activity {
         LinearLayout steering=card(root,false);
         steering.addView(text("РУЛЬ · СЫРОЕ ЗНАЧЕНИЕ",12,BLUE,true));
         field(steering,"STEER_RAW","Поворот","ед.");
-        steering.addView(text("Плюс — влево, минус — вправо. Примерный диапазон ±5300. Это не градусы. Доступно через инженерное меню только пока оно открыто.",12,GREY,false));
+        steering.addView(text("±5300 — сырое значение, не градусы. Руль обновляется только при открытом CAN Information. После возврата показывается ПОСЛЕДНЕЕ значение, не LIVE.",12,GREY,false));
         LinearLayout doors=card(root,false);
-        doors.addView(text("КУЗОВ · СТАТУСЫ ИНЖЕНЕРНОГО МЕНЮ",12,BLUE,true));
+        doors.addView(text("КУЗОВ · ДВЕРИ И КАПОТ",12,BLUE,true));
+        doors.addView(text("Статусы Humax CAN Information фиксируются только когда открыт инженерный экран. Ниже может быть последнее зафиксированное состояние, а не текущее.",12,GREY,false));
         field(doors,"DRIVER_DOOR","Водительская дверь","");
         field(doors,"PASSENGER_DOOR","Пассажирская дверь","");
         field(doors,"REAR_LEFT_DOOR","Задняя левая дверь","");
@@ -193,45 +194,90 @@ public final class VehicleDashboardActivity extends Activity {
         fields.put(key,value);meta.put(key,source);
         value.setTag(units);
     }
+    private static boolean uiHistory(String key){
+        return "STEER_RAW".equals(key)||"ENGINE".equals(key)||"REVERSE".equals(key)
+            ||"ALARM".equals(key)||"TAIL_GATE".equals(key)||"HOOD".equals(key)
+            ||"DRIVER_DOOR".equals(key)||"PASSENGER_DOOR".equals(key)
+            ||"REAR_LEFT_DOOR".equals(key)||"REAR_RIGHT_DOOR".equals(key);
+    }
+    private static String readableState(String key,String raw,String source){
+        if("IGNITION".equals(key)){
+            if("4".equals(raw))return "Включено";
+            return "код "+raw;
+        }
+        if("HANDBRAKE".equals(key)){
+            if("sensor".equals(source)){
+                if("1".equals(raw)||"Затянут".equals(raw))return "Затянут";
+                if("0".equals(raw)||"Отпущен".equals(raw))return "Отпущен";
+            }
+            if(raw.startsWith("Not Applied"))return "Отпущен";
+            if(raw.startsWith("Applied"))return "Затянут";
+        }
+        if("GEAR".equals(key)&&"sensor".equals(source))return "код "+raw;
+        if("REVERSE".equals(key)){
+            if(raw.startsWith("Not Engaged"))return "Выключен";
+            if(raw.startsWith("Engaged"))return "Включён";
+        }
+        if("ENGINE".equals(key)){
+            if(raw.startsWith("Engine Running"))return "Работает";
+            if(raw.startsWith("Engine Off")||raw.startsWith("Engine Not Running")
+                ||raw.startsWith("Engine Stopped"))return "Выключен";
+        }
+        if(key.endsWith("_DOOR")||"TAIL_GATE".equals(key)||"HOOD".equals(key)){
+            if(raw.startsWith("Close")||raw.startsWith("Locked"))
+                return ("TAIL_GATE".equals(key)||"HOOD".equals(key))?"Закрыт":"Закрыта";
+            if(raw.startsWith("Open")||raw.startsWith("Unlocked"))
+                return ("TAIL_GATE".equals(key)||"HOOD".equals(key))?"Открыт":"Открыта";
+            if(raw.startsWith("Unknown"))return "Неизвестно";
+        }
+        if("STEER_RAW".equals(key)){
+            try{return String.format(Locale.US,"%+.0f",Double.parseDouble(raw.replace(',','.')));}
+            catch(Exception ignored){}
+        }
+        return raw;
+    }
     private void refresh(){
         if(stateText==null)return;
         long now=System.currentTimeMillis();
         boolean running=VehicleLog.running(this);
         stateText.setText((running?"● Чтение включено · ":"○ Чтение выключено · ")+VehicleLog.state(this));
         if(elmStatus!=null)elmStatus.setText("Bluetooth ELM327: "+EngineElmService.state(this));
-        String speed=VehicleLog.value(this,"SPEED");
-        long age=VehicleLog.at(this,"SPEED");
-        boolean fresh=age>0 && now-age<12000;
-        speedText.setText(fresh?speed:"—");
+        long speedTime=VehicleLog.at(this,"SPEED");
+        boolean speedFresh=speedTime>0 && now-speedTime<12000;
+        speedText.setText(speedFresh?VehicleLog.value(this,"SPEED"):"—");
         speedMeta.setText(describeSource("SPEED",now));
         for(String signal:fields.keySet()){
-            long seen=VehicleLog.at(this,signal);
-            boolean valid=seen>0 && now-seen<12000;
-            String value=valid?VehicleLog.value(this,signal):"—";
-            if(valid && "IGNITION".equals(signal)){
-                if("4".equals(value))value="Включено (4)";
-                else value="код "+value;
-            }
-            if(valid && ("GEAR".equals(signal)||"HANDBRAKE".equals(signal))
-                && "sensor".equals(VehicleLog.source(this,signal)))value="код "+value;
-            if(valid && "STEER_RAW".equals(signal)){
-                try{
-                    double raw=Double.parseDouble(value.replace(',','.'));
-                    value=String.format(Locale.US,"%+.0f",raw);
-                }catch(Exception ignored){}
-            }
+            long lastAt=VehicleLog.at(this,signal);
+            String src=VehicleLog.source(this,signal);
+            String raw=VehicleLog.value(this,signal);
+            boolean available=lastAt>0 && !"—".equals(raw) &&
+                !("ui".equals(src) && "CAN RX".equalsIgnoreCase(raw));
+            boolean fresh=available && now-lastAt<12000;
+            // OEM Accessibility is screen-only. Preserve its last observed value
+            // visibly labelled "not LIVE"; never misrepresent it as current.
+            boolean lastUi=available && "ui".equals(src) && uiHistory(signal);
+            boolean show=fresh||lastUi;
+            String value=show?readableState(signal,raw,src):"—";
             String units=(String)fields.get(signal).getTag();
-            fields.get(signal).setText(value+(valid && units!=null&&!units.isEmpty()?" "+units:""));
+            fields.get(signal).setText(value+(show && units!=null&&!units.isEmpty()?" "+units:""));
+            fields.get(signal).setTextColor(lastUi&&!fresh?GREY:DARK);
             meta.get(signal).setText(describeSource(signal,now));
         }
     }
     private String describeSource(String signal,long now){
         long timestamp=VehicleLog.at(this,signal);
-        if(timestamp<=0)return "нет доступных данных";
-        String source=VehicleLog.source(this,signal);
-        String by="property".equals(source)?"CarProperty":"sensor".equals(source)?"CarSensor":
-            "ui".equals(source)?"Engineering UI":source;
+        String src=VehicleLog.source(this,signal);
+        if(timestamp<=0){
+            return uiHistory(signal)?"Источник: инженерное меню · ещё не считано":
+                "нет доступных данных";
+        }
+        String by="property".equals(src)?"CarProperty": "sensor".equals(src)?"CarSensor":
+            "ui".equals(src)?"Engineering UI":"elm".equals(src)?"Bluetooth ELM":src;
         long age=Math.max(0,(now-timestamp)/1000);
+        if("ui".equals(src)){
+            return age<=12?by+" · видимый экран · "+age+" с назад":
+                "ПОСЛЕДНЕЕ (не LIVE) · "+age+" с назад";
+        }
         return by+" · "+age+" с назад"+(age>12?" · устарело":"");
     }
     private void auditEngine(){

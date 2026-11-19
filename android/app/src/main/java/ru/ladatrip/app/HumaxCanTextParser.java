@@ -7,13 +7,30 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-/** Strict, read-only parser for accessible text on the Humax CAN Information page. */
+/**
+ * Strict read-only parsing of the Humax CAN Information accessibility tree.
+ *
+ * OEM layout renders labels and values in separate TextViews. Previous versions
+ * de-duplicated identical "Close (1)" nodes, losing independent door states,
+ * and then paired labels with the next section title. Match text by row bounds.
+ */
 final class HumaxCanTextParser {
-    private static final Pattern DECIMAL=Pattern.compile(
-        "^\\s*([+-]?\\d+(?:[.,]\\d+)?)\\s*(?:\\(\\s*Valid\\s*\\))?\\s*(?:°C|км/ч|km/h|км|km|л|L|rpm|об/мин)?\\s*$",
+    static final class TextCell {
+        final String text;
+        final int left,top,right,bottom;
+        TextCell(String text,int left,int top,int right,int bottom) {
+            this.text=text==null?"":text.trim();this.left=left;this.top=top;
+            this.right=right;this.bottom=bottom;
+        }
+        boolean located(){return right>left && bottom>top;}
+        int centerY(){return (top+bottom)/2;}
+        int height(){return bottom-top;}
+    }
+    private static final Pattern NUMBER=Pattern.compile(
+        "^([+-]?\\d+(?:[.,]\\d+)?)\\s*(?:\\(\\s*Valid\\s*\\))?\\s*(?:°C|км/ч|km/h|km|км|л|L|rpm|об/мин)?$",
         Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
     private static final Pattern STEERING=Pattern.compile(
-        "^\\s*(?:Unknown|Valid|Invalid)?\\s*\\(?([+-]?\\d+(?:[.,]\\d+)?)\\)?\\s*$",
+        "^(?:Unknown|Valid|Invalid)?\\s*\\(?([+-]?\\d+(?:[.,]\\d+)?)\\)?$",
         Pattern.CASE_INSENSITIVE);
     private static final Pattern DOOR=Pattern.compile(
         "^(?:Close|Closed|Open|Unknown|Locked|Unlocked)(?:\\s*\\(\\d+\\))?$",
@@ -55,65 +72,96 @@ final class HumaxCanTextParser {
         new Field("ODOMETER","mileage")
     };
     private HumaxCanTextParser(){}
-    static Map<String,String> parse(List<String> nodes){
+
+    static Map<String,String> parseCells(List<TextCell> cells){
         Map<String,String> values=new LinkedHashMap<>();
-        for(int i=0;i<nodes.size();i++){
-            String text=nodes.get(i);
-            Field field=find(text);
+        if(cells==null)return values;
+        for(int i=0;i<cells.size();i++){
+            TextCell label=cells.get(i);
+            Field field=find(label.text);
             if(field==null)continue;
-            String suffix=text.substring(field.label.length()).replaceFirst("^[\\s:=]+","").trim();
+            String suffix=label.text.substring(field.label.length())
+                .replaceFirst("^[\\s:=]+","").trim();
             String value=validated(field.key,suffix);
-            if(value==null && suffix.isEmpty() && i+1<nodes.size()){
-                String next=nodes.get(i+1);
-                if(find(next)==null)value=validated(field.key,next);
+            if(value==null && suffix.isEmpty()){
+                TextCell best=null;
+                int bestScore=Integer.MAX_VALUE;
+                for(int j=0;j<cells.size();j++){
+                    if(j==i)continue;
+                    TextCell candidate=cells.get(j);
+                    if(find(candidate.text)!=null)continue;
+                    String parsed=validated(field.key,candidate.text);
+                    if(parsed==null)continue;
+                    if(!label.located()||!candidate.located())continue;
+                    int maxDelta=Math.max(10,Math.max(label.height(),candidate.height())*3/4);
+                    int deltaY=Math.abs(label.centerY()-candidate.centerY());
+                    if(deltaY>maxDelta)continue;
+                    if(candidate.left+8<label.right)continue;
+                    int deltaX=Math.max(0,candidate.left-label.right);
+                    int score=deltaY*6+deltaX;
+                    if(score<bestScore){best=candidate;bestScore=score;}
+                }
+                if(best!=null)value=validated(field.key,best.text);
+                // No reliable geometry? Only use an immediate next node, and only
+                // if it is a valid value. Do not guess across intervening labels.
+                if(value==null && !label.located() && i+1<cells.size()){
+                    TextCell next=cells.get(i+1);
+                    if(find(next.text)==null)value=validated(field.key,next.text);
+                }
             }
-            // Reject non-values such as the following section title "CAN RX".
             if(value!=null)values.put(field.key,value);
         }
         return values;
     }
-    private static Field find(String source){
-        String t=source.trim().toLowerCase(Locale.ROOT);
-        // These OEM lines are independent signals, not the standard rear doors or steering angle.
-        if(t.startsWith("extra rear") || t.startsWith("counter trigonometric sense rotation"))return null;
-        for(Field f:FIELDS){
-            if(t.equals(f.label) || t.startsWith(f.label+" ") || t.startsWith(f.label+":")
-                || t.startsWith(f.label+"="))return f;
+
+    private static Field find(String text){
+        String s=text.trim().toLowerCase(Locale.ROOT);
+        if(s.startsWith("extra rear")||s.startsWith("counter trigonometric sense rotation"))
+            return null;
+        for(Field field:FIELDS){
+            if(s.equals(field.label)||s.startsWith(field.label+" ")||
+                s.startsWith(field.label+":")||s.startsWith(field.label+"="))
+                return field;
         }
         return null;
     }
-    private static String validated(String signal,String text){
-        if(text==null)return null;
-        String s=text.trim();
-        if(s.isEmpty()||s.length()>70)return null;
-        if("STEER_RAW".equals(signal)){
-            Matcher match=STEERING.matcher(s);
-            return match.matches()?match.group(1).replace(',','.'):null;
+
+    private static String validated(String key,String raw){
+        if(raw==null)return null;
+        String s=raw.trim();
+        if(s.isEmpty()||s.length()>80)return null;
+        if("STEER_RAW".equals(key)){
+            Matcher m=STEERING.matcher(s);
+            if(!m.matches())return null;
+            double value=parseNumber(m.group(1));
+            return Double.isFinite(value) && value>= -10000 && value<=10000?
+                m.group(1).replace(',','.'):null;
         }
-        if("SPEED".equals(signal)||"FUEL_L".equals(signal)||"OUTSIDE_C".equals(signal)
-            ||"RPM".equals(signal)||"ODOMETER".equals(signal)){
-            Matcher match=DECIMAL.matcher(s);
-            if(!match.matches())return null;
-            double number;
-            try{number=Double.parseDouble(match.group(1).replace(',','.'));}
-            catch(NumberFormatException ex){return null;}
-            if(!Double.isFinite(number))return null;
-            if("SPEED".equals(signal)&&(number<0||number>400))return null;
-            if("FUEL_L".equals(signal)&&(number<0||number>300))return null;
-            if("OUTSIDE_C".equals(signal)&&(number< -70||number>90))return null;
-            if("RPM".equals(signal)&&(number<0||number>12000))return null;
-            if("ODOMETER".equals(signal)&&(number<0||number>9999999))return null;
-            return match.group(1).replace(',','.');
+        if("SPEED".equals(key)||"FUEL_L".equals(key)||"OUTSIDE_C".equals(key)
+            ||"RPM".equals(key)||"ODOMETER".equals(key)){
+            Matcher m=NUMBER.matcher(s);
+            if(!m.matches())return null;
+            double value=parseNumber(m.group(1));
+            if(!Double.isFinite(value))return null;
+            if("SPEED".equals(key) && (value<0||value>400))return null;
+            if("FUEL_L".equals(key) && (value<0||value>300))return null;
+            if("OUTSIDE_C".equals(key) && (value< -70||value>90))return null;
+            if("RPM".equals(key) && (value<0||value>12000))return null;
+            if("ODOMETER".equals(key) && (value<0||value>10000000))return null;
+            return m.group(1).replace(',','.');
         }
-        if("FUEL_LOW".equals(signal)){
+        if("FUEL_LOW".equals(key))
             return s.matches("(?i)^(true|false|0|1)$")?s.toLowerCase(Locale.ROOT):null;
-        }
-        if("REVERSE".equals(signal))return REVERSE.matcher(s).matches()?s:null;
-        if("HANDBRAKE".equals(signal))return BRAKE.matcher(s).matches()?s:null;
-        if("ENGINE".equals(signal))return ENGINE.matcher(s).matches()?s:null;
-        if("ALARM".equals(signal))return ALARM.matcher(s).matches()?s:null;
-        if(signal.endsWith("_DOOR")||"HOOD".equals(signal)||"TAIL_GATE".equals(signal))
+        if("REVERSE".equals(key))return REVERSE.matcher(s).matches()?s:null;
+        if("HANDBRAKE".equals(key))return BRAKE.matcher(s).matches()?s:null;
+        if("ENGINE".equals(key))return ENGINE.matcher(s).matches()?s:null;
+        if("ALARM".equals(key))return ALARM.matcher(s).matches()?s:null;
+        if(key.endsWith("_DOOR")||"HOOD".equals(key)||"TAIL_GATE".equals(key))
             return DOOR.matcher(s).matches()?s:null;
         return null;
+    }
+    private static double parseNumber(String s){
+        try{return Double.parseDouble(s.replace(',','.'));}
+        catch(Exception ex){return Double.NaN;}
     }
 }

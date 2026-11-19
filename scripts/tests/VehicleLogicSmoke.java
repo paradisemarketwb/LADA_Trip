@@ -89,8 +89,20 @@ public final class VehicleLogicSmoke {
         assertEq("22.0",HumaxCanTextParser.parseCells(sameLine).get("SPEED"),"OEM speed inline");
         assertEq("42.0",HumaxCanTextParser.parseCells(sameLine).get("FUEL_L"),"OEM fuel inline");
     }
+    private static void testBackgroundBody(){
+        assertTrue(VehicleDisplayFormat.hasArea(new int[]{1,4},4),"Exact door zone");
+        assertTrue(!VehicleDisplayFormat.hasArea(new int[]{0x50},0x10),"Combined zone is not an individual door");
+        assertTrue(!VehicleDisplayFormat.hasArea(null,1),"Missing zone list");
+        assertEq("Открыта",VehicleDisplayFormat.state("DRIVER_DOOR","2","property"),"Open door");
+        assertEq("Закрыт",VehicleDisplayFormat.state("HOOD","1","property"),"Closed hood");
+        assertEq("Неизвестно · 0",VehicleDisplayFormat.state("TAIL_GATE","0","property"),"Unknown tail gate");
+        assertEq("Работает",VehicleDisplayFormat.state("ENGINE","7","property"),"Running engine");
+        assertEq("Включена",VehicleDisplayFormat.state("REVERSE","2","property"),"Reverse engaged");
+        assertEq("Выключена",VehicleDisplayFormat.state("REVERSE","1","property"),"Reverse disengaged");
+        assertEq("Тревога",VehicleDisplayFormat.state("ALARM","7","property"),"Active alarm");
+    }
     public static void main(String[] args){
-        testSpeed();testSpeedCalibration();testAccessibility();
+        testSpeed();testSpeedCalibration();testAccessibility();testBackgroundBody();
         System.out.println("Vehicle contract tests: "+checks+" passed.");
     }
 }

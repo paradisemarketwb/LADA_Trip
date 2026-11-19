@@ -346,7 +346,7 @@ public final class UnifiedDashboardActivity extends Activity {
     private String sourceLabel(String key,long now){
         long time=VehicleLog.at(this,key);
         if(time==0)return VehicleDisplayFormat.engineerOnly(key)?
-            "Нет источника вне инженерного меню":"Нет данных";
+            "Нет доступного фонового показания":"Нет данных";
         long seconds=Math.max(0,(now-time)/1000);
         String src=VehicleLog.source(this,key);
         if("ui".equals(src))return seconds>12?

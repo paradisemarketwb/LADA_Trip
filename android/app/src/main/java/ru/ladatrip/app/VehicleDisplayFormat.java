@@ -18,6 +18,11 @@ public final class VehicleDisplayFormat {
             default:return false;
         }
     }
+    static boolean hasArea(int[] areas,int requested){
+        if(areas==null)return false;
+        for(int area:areas)if(area==requested)return true;
+        return false;
+    }
     public static String state(String key,String raw,String source){
         if(raw==null||raw.isEmpty()||raw.equals("—"))return "—";
         if("HANDBRAKE".equals(key)){
@@ -58,6 +63,36 @@ public final class VehicleDisplayFormat {
             if(raw.startsWith("Close")||raw.startsWith("Locked"))return male?"Закрыт":"Закрыта";
             if(raw.startsWith("Open")||raw.startsWith("Unlocked"))return male?"Открыт":"Открыта";
             if(raw.startsWith("Unknown"))return "Неизвестно";
+        }
+        if("property".equals(source)){
+            if(key.endsWith("_DOOR")||"HOOD".equals(key)||"TAIL_GATE".equals(key)){
+                boolean male="HOOD".equals(key)||"TAIL_GATE".equals(key);
+                if("3".equals(raw))return "Не используется";
+                if("1".equals(raw))return male?"Закрыт":"Закрыта";
+                if("2".equals(raw))return male?"Открыт":"Открыта";
+                return "Неизвестно · "+raw;
+            }
+            if("ENGINE".equals(key)&&"7".equals(raw))return "Работает";
+            if("ENGINE".equals(key)&&"9".equals(raw))return "Выключен";
+            if("REVERSE".equals(key)){
+                if("2".equals(raw))return "Включена";
+                if("1".equals(raw))return "Выключена";
+                if("0".equals(raw))return "Не используется";
+                return "Неизвестно · "+raw;
+            }
+            if("ALARM".equals(key)){
+                switch(raw){
+                    case "0":return "Снята с охраны";
+                    case "1":return "Снята с охраны после тревоги";
+                    case "2":return "Снята с охраны · ожидание двери";
+                    case "3":return "Под охраной";
+                    case "4":return "Под охраной · открыт периметр";
+                    case "5":return "Задержка постановки на охрану";
+                    case "6":return "Под охраной без багажника";
+                    case "7":return "Тревога";
+                    default:return "Неизвестно · "+raw;
+                }
+            }
         }
         if("GEAR".equals(key)&&"sensor".equals(source))return "Код "+raw;
         return raw;

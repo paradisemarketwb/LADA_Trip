@@ -30,8 +30,12 @@ public final class VehicleLiveService extends Service {
     private static final String CHANNEL="vehicle_live";
     private static final int NOTIFICATION_ID=184;
     private static final class Signal {
-        final String name,permission;final int id;
-        Signal(String n,int id,String permission){this.name=n;this.id=id;this.permission="android.car.permission."+permission;}
+        final String name,permission;final int id,area;
+        Signal(String name,int id,String permission){this(name,id,permission,0);}
+        Signal(String name,int id,String permission,int area){
+            this.name=name;this.id=id;this.area=area;
+            this.permission="android.car.permission."+permission;
+        }
     }
     private static final Signal[] PROPERTIES={
         new Signal("SPEED",0x11600207,"CAR_SPEED"),
@@ -45,7 +49,15 @@ public final class VehicleLiveService extends Service {
         new Signal("COOLANT_C",0x11600301,"CAR_ENGINE_DETAILED"),
         new Signal("ODOMETER",0x11600204,"CAR_MILEAGE"),
         new Signal("STEER_RAW",0x2140F006,"CAR_VENDOR_EXTENSION"),
-        new Signal("REVERSE",0x2140F003,"CAR_VENDOR_EXTENSION")
+        new Signal("REVERSE",0x2140F003,"CAR_VENDOR_EXTENSION"),
+        new Signal("ENGINE",0x2140F002,"CAR_VENDOR_EXTENSION"),
+        new Signal("ALARM",0x2140F001,"CAR_VENDOR_EXTENSION"),
+        new Signal("DRIVER_DOOR",0x16400B00,"CONTROL_CAR_DOORS",0x1),
+        new Signal("PASSENGER_DOOR",0x16400B00,"CONTROL_CAR_DOORS",0x4),
+        new Signal("REAR_LEFT_DOOR",0x16400B00,"CONTROL_CAR_DOORS",0x10),
+        new Signal("REAR_RIGHT_DOOR",0x16400B00,"CONTROL_CAR_DOORS",0x40),
+        new Signal("HOOD",0x16400B00,"CONTROL_CAR_DOORS",0x10000000),
+        new Signal("TAIL_GATE",0x16400B00,"CONTROL_CAR_DOORS",0x20000000)
     };
     private static final class Sensor {
         final String name; final int id;
@@ -191,10 +203,14 @@ public final class VehicleLiveService extends Service {
             Object config=cfgs.get(signal.id);
             if(config==null)continue;
             try{
+                if(signal.area!=0){
+                    int[] areas=(int[])config.getClass().getMethod("getAreaIds").invoke(config);
+                    if(!VehicleDisplayFormat.hasArea(areas,signal.area))continue;
+                }
                 Class<?> valueType=(Class<?>)config.getClass().getMethod("getPropertyType").invoke(config);
                 Object wrapper=propertyManager.getClass()
                     .getMethod("getProperty",Class.class,int.class,int.class)
-                    .invoke(propertyManager,valueType,signal.id,0);
+                    .invoke(propertyManager,valueType,signal.id,signal.area);
                 if(wrapper==null)continue;
                 int status=((Number)wrapper.getClass().getMethod("getStatus").invoke(wrapper)).intValue();
                 if(status!=0)continue;
@@ -205,7 +221,7 @@ public final class VehicleLiveService extends Service {
                 VehicleLog.put(this,"property",signal.name,display,
                     "ID=0x"+Integer.toHexString(signal.id)+
                         ("SPEED".equals(signal.name)?"; Humax R2; raw="+raw+" km/h":
-                        "; direct CarPropertyManager"));
+                        "; area=0x"+Integer.toHexString(signal.area)+"; direct CarPropertyManager"));
             }catch(Throwable t){
                 android.util.Log.w("LadaVehicle","Property "+signal.name+" unavailable: "+describe(t));
             }

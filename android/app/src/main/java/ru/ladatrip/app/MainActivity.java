@@ -35,7 +35,7 @@ public final class MainActivity extends Activity {
     private static final int NAVY=Color.rgb(19,31,50), BLUE=Color.rgb(58,103,205), MUTED=Color.rgb(103,116,136);
     private static final int BG=Color.rgb(244,247,251), WHITE=Color.WHITE;
     private TripStore store;
-    private TextView positionView,tripView,pendingView,historyView;
+    private TextView positionView,tripView,pendingView,historyView,gpsHealthView;
     private String pendingExport;
     private Handler handler=new Handler(Looper.getMainLooper());
     private final Runnable refreshTimer=new Runnable(){@Override public void run(){refresh();handler.postDelayed(this,4000);}};
@@ -74,6 +74,7 @@ public final class MainActivity extends Activity {
 
         LinearLayout gps=card(root,"ПОСЛЕДНЯЯ ГЕОПОЗИЦИЯ");
         positionView=text("Ожидаем координаты GPS",16,NAVY,true);gps.addView(positionView,lp(8,10));
+        gpsHealthView=text("Состояние GPS…",12,MUTED,false);gps.addView(gpsHealthView,lp(0,10));
         Button locate=button("Открыть точку на карте  ↗",false);gps.addView(locate,new LinearLayout.LayoutParams(-1,dp(48)));
         locate.setOnClickListener(v->{TripStore.Fix f=store.lastFix();if(f==null){toast("GPS-координат пока нет");return;}
             Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse(String.format(Locale.US,"https://www.google.com/maps?q=%.6f,%.6f",f.lat,f.lon)));
@@ -141,6 +142,7 @@ public final class MainActivity extends Activity {
             positionView.setText(String.format(Locale.US,"%.6f, %.6f",f.lat,f.lon)+"\nТочность ±"+Math.round(f.accuracy)+" м\n"+time);
         }
         historyView.setText(store.recentTrips());
+        if(gpsHealthView!=null)gpsHealthView.setText(GpsHealth.summary(this));
     }
     private void startMonitor() {
         if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED) {

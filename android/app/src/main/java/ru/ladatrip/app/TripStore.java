@@ -168,7 +168,11 @@ public final class TripStore extends SQLiteOpenHelper {
     public synchronized String exportDiagnostics(Context context) {
         JSONObject j=new JSONObject();
         try {
-            j.put("app","LADA Trip 0.1.0");j.put("exported_at",iso(System.currentTimeMillis()));
+            j.put("app","LADA Trip");
+            try{
+                j.put("app_version",context.getPackageManager().getPackageInfo(context.getPackageName(),0).versionName);
+            }catch(Exception e){j.put("app_version","unknown");}
+            j.put("exported_at",iso(System.currentTimeMillis()));
             j.put("android_sdk",android.os.Build.VERSION.SDK_INT);j.put("model",android.os.Build.MODEL);
             j.put("manufacturer",android.os.Build.MANUFACTURER);
             j.put("monitor_enabled",Settings.monitor(context));j.put("auto_start",Settings.autoStart(context));
@@ -182,6 +186,7 @@ public final class TripStore extends SQLiteOpenHelper {
             j.put("location_permission",context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION)==android.content.pm.PackageManager.PERMISSION_GRANTED);
             Fix last=lastFix(); j.put("last_fix_age_seconds",last==null?JSONObject.NULL:Math.max(0,(System.currentTimeMillis()-last.time)/1000));
             j.put("system_build",android.os.Build.DISPLAY);
+            j.put("gps_health",GpsHealth.snapshot(context));
             // Точная геопозиция, токены и URL не экспортируются в диагностику.
         }catch(Exception ignored){}
         try { return j.toString(2); }

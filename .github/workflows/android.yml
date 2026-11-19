@@ -37,6 +37,10 @@ jobs:
             android/app/src/main/java/ru/ladatrip/app/VehicleDisplayFormat.java \
             scripts/tests/VehicleLogicSmoke.java
           java -cp "$RUNNER_TEMP/vehicle-tests" ru.ladatrip.app.VehicleLogicSmoke
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/vehicle-tests" \
+            android/app/src/main/java/ru/ladatrip/app/FuelCalibration.java \
+            scripts/tests/FuelLogicSmoke.java
+          java -cp "$RUNNER_TEMP/vehicle-tests" ru.ladatrip.app.FuelLogicSmoke
       - name: Install Android SDK packages
         run: |
           SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"

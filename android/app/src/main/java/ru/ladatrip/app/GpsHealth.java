@@ -22,7 +22,7 @@ public final class GpsHealth {
             .putLong("started_at",System.currentTimeMillis())
             .putInt("raw_callbacks",0).putInt("valid_callbacks",0)
             .putInt("rejected_callbacks",0).putInt("satellite_updates",0)
-            .putLong("last_raw_at",0).putLong("last_valid_at",0)
+            .putLong("last_raw_at",0).putLong("last_valid_at",0).remove("speed_kmh")
             .putString("last_rejection","")
             .putString("subscription","Ожидание регистрации GPS")
             .putString("gnss_state","Не проверено")
@@ -55,10 +55,22 @@ public final class GpsHealth {
         }
         e.apply();
     }
-    static void accepted(Context c){
+    static void accepted(Context c,Location fix){
         SharedPreferences sp=preferences(c);
-        sp.edit().putInt("valid_callbacks",sp.getInt("valid_callbacks",0)+1)
-            .putLong("last_valid_at",System.currentTimeMillis()).apply();
+        SharedPreferences.Editor edit=sp.edit()
+            .putInt("valid_callbacks",sp.getInt("valid_callbacks",0)+1)
+            .putLong("last_valid_at",System.currentTimeMillis());
+        if(fix.hasSpeed()&&Float.isFinite(fix.getSpeed())&&fix.getSpeed()>=0)
+            edit.putFloat("speed_kmh",fix.getSpeed()*3.6f);
+        else edit.remove("speed_kmh");
+        edit.apply();
+    }
+    static void clearSpeed(Context c){preferences(c).edit().remove("speed_kmh").apply();}
+    static float freshSpeed(Context c,long now){
+        SharedPreferences sp=preferences(c);
+        return sp.getBoolean("service_running",false)&&
+            VehicleDisplayFormat.fresh(sp.getLong("last_valid_at",0),now,6000)
+            ?sp.getFloat("speed_kmh",Float.NaN):Float.NaN;
     }
     static void rejected(Context c,String cause){
         SharedPreferences sp=preferences(c);

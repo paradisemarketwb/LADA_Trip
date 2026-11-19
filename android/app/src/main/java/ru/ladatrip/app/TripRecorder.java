@@ -22,23 +22,25 @@ public final class TripRecorder {
         // After a long power-off, close an unfinished trip at the last REAL GPS fix.
         if(tripId!=0 && prior!=null && System.currentTimeMillis()-prior.time>RESTART_GAP_MS) finish(prior);
     }
-    public synchronized void take(Location location) {
-        if(location==null || !location.hasAccuracy() || location.getAccuracy()>80 || location.getAccuracy()<0)return;
-        if(Math.abs(System.currentTimeMillis()-location.getTime())>120000)return;
-        TripStore.Fix fix=new TripStore.Fix(location.getTime(),location.getLatitude(),location.getLongitude(),location.getAccuracy());
-        if(prior!=null && fix.time<=prior.time)return;
+    public synchronized boolean take(Location location) {
+        double lat=location.getLatitude(),lon=location.getLongitude();
+        if(!Double.isFinite(lat)||!Double.isFinite(lon)||Math.abs(lat)>90||Math.abs(lon)>180)return false;
+        TripStore.Fix fix=new TripStore.Fix(location.getTime(),lat,lon,location.getAccuracy());
+        if(prior!=null && fix.time<=prior.time)return false;
         if(tripId!=0 && prior!=null && fix.time-prior.time>RESTART_GAP_MS) finish(prior);
-        double meters=prior==null?0:distance(prior,fix);
-        double secs=prior==null?0:(fix.time-prior.time)/1000.0;
-        // Reject a massive GPS jump and retain the current position as a new baseline.
-        if(prior!=null && secs>0 && meters/secs>65){prior=fix;store.saveFix(fix);return;}
-        boolean moving=(location.hasSpeed() && location.getSpeed()>=2.0f) || (secs>0 && secs<=30 && meters>25 && meters/secs>=2.0);
+        boolean continuous=prior!=null && fix.time-prior.time<=120000;
+        double meters=continuous?distance(prior,fix):0;
+        double secs=continuous?(fix.time-prior.time)/1000.0:0;
+        // A rejected jump can't become the baseline for distance or last known location.
+        if(continuous && meters/secs>65)return false;
+        if(!continuous){stationarySince=0;stopSaved=false;movingSamples=0;}
+        float speed=location.hasSpeed()&&Float.isFinite(location.getSpeed())&&location.getSpeed()>=0
+            ?location.getSpeed():-1f;
+        boolean moving=(speed>=2.0f) || (secs>0 && secs<=30 && meters>25 && meters/secs>=2.0);
         if(tripId==0) {
             movingSamples=moving?movingSamples+1:0;
             if(movingSamples>=2) {
-                tripId=store.startTrip(prior==null?fix.time:prior.time);
-                store.addPoint(tripId,prior==null?fix:prior,location.getSpeed());
-                store.queue("trip_start",fix,0,0);
+                tripId=store.startTrip(prior);
                 stationarySince=0;stopSaved=false;movingSamples=0;
                 listener.onEvent("start");
             }
@@ -50,8 +52,7 @@ public final class TripRecorder {
                     stationarySince=0;stopSaved=false;
                 }
             } else if(stationarySince==0) {stationarySince=fix.time;stopSaved=false;}
-            if(moving && prior!=null && secs>0 && secs<=120 && meters>=7 && meters/secs<=65)store.addDistance(tripId,meters);
-            store.addPoint(tripId,fix,location.hasSpeed()?location.getSpeed():0);
+            store.addPoint(tripId,fix,speed,moving&&continuous&&meters>=7?meters:0);
             if(stationarySince!=0 && fix.time-stationarySince>=TRIP_END_STOP_MS) {
                 if(!stopSaved){store.addStop(tripId,stationarySince,fix.time,fix);stopSaved=true;}
                 finish(fix);
@@ -59,6 +60,7 @@ public final class TripRecorder {
         }
         prior=fix;
         store.saveFix(fix);
+        return true;
     }
     private static double distance(TripStore.Fix a,TripStore.Fix b) {
         float[] arr=new float[1];Location.distanceBetween(a.lat,a.lon,b.lat,b.lon,arr);return arr[0];
@@ -67,9 +69,8 @@ public final class TripRecorder {
     private void finish(TripStore.Fix fix) {
         if(tripId==0)return;
         long at=fix!=null?fix.time:System.currentTimeMillis();
-        double dist=store.distance(tripId);long start=store.startTime(tripId);
         if(stationarySince!=0 && fix!=null && at-stationarySince>=60000 && !stopSaved)store.addStop(tripId,stationarySince,at,fix);
-        store.endTrip(tripId,at);store.queue("trip_end",fix,dist,Math.max(0,(at-start)/1000));
+        store.endTrip(tripId,at);
         tripId=0;stationarySince=0;stopSaved=false;movingSamples=0;
         listener.onEvent("end");
     }

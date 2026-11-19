@@ -25,6 +25,5 @@ public final class BootReceiver extends BroadcastReceiver {
         Settings.monitor(context,true);
         try{context.startForegroundService(new Intent(context,TripService.class));}
         catch(Exception e){android.util.Log.w("LadaTrip","GPS autoboot unavailable",e);}
-        DeliveryJob.schedule(context);
     }
 }

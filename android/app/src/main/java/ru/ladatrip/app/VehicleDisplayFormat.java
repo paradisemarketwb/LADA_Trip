@@ -62,10 +62,6 @@ public final class VehicleDisplayFormat {
         if("GEAR".equals(key)&&"sensor".equals(source))return "Код "+raw;
         return raw;
     }
-    /**
-     * In measured Humax R2 vehicle-property output speed is already km/h.
-     * Sensor-manager speed is a separate path and uses Android's m/s contract.
-     */
     /** Metres from consecutive CAN speeds in km/h and elapsed milliseconds. */
     public static double integratedMeters(double previous,double current,long elapsedMs){
         if(!Double.isFinite(previous)||!Double.isFinite(current)||
@@ -73,8 +69,60 @@ public final class VehicleDisplayFormat {
             elapsedMs<=0||elapsedMs>12000)return 0;
         return ((previous+current)/2.0)*elapsedMs/3600.0;
     }
+    /**
+     * In measured Humax R2 vehicle-property output speed is already km/h.
+     * Sensor-manager speed is a separate path and uses Android's m/s contract.
+     */
     public static double speedKmh(double raw,String source){
         if(!Double.isFinite(raw)||raw<0)return Double.NaN;
-        return "sensor".equals(source)?raw*3.6:raw;
+        switch(source){
+            case "sensor": return raw*3.6;
+            case "property":
+            case "ui": return raw;
+            default: return Double.NaN;
+        }
+    }
+
+    public static final class SpeedCalibration {
+        public final double factor, offset;
+        private SpeedCalibration(double factor,double offset){
+            if(!Double.isFinite(factor)||factor<=0||!Double.isFinite(offset))
+                throw new IllegalArgumentException("Invalid calibration");
+            this.factor=factor;this.offset=offset;
+        }
+        public double correct(double speed){
+            if(!Double.isFinite(speed)||speed<0)return Double.NaN;
+            return speed==0?0:Math.max(0,speed*factor+offset);
+        }
+        /** Least-squares fit for control points expressed in km/h. */
+        public static SpeedCalibration fit(double[] measured,double[] reference){
+            if(measured.length!=reference.length||measured.length<2)
+                throw new IllegalArgumentException("Two distinct control points required");
+            double x=0,y=0;
+            for(int i=0;i<measured.length;i++){
+                if(!Double.isFinite(measured[i])||!Double.isFinite(reference[i])||
+                    measured[i]<0||reference[i]<0||measured[i]>240||reference[i]>240)
+                    throw new IllegalArgumentException("Control point outside 0–240 km/h");
+                x+=measured[i];y+=reference[i];
+            }
+            x/=measured.length;y/=measured.length;
+            double variance=0,covariance=0;
+            for(int i=0;i<measured.length;i++){
+                double dx=measured[i]-x;
+                variance+=dx*dx;covariance+=dx*(reference[i]-y);
+            }
+            double factor=covariance/variance;
+            return new SpeedCalibration(factor,y-factor*x);
+        }
+        public static SpeedCalibration parse(String input){
+            String[] lines=input.trim().split("\\r?\\n");
+            double[] measured=new double[lines.length],reference=new double[lines.length];
+            for(int i=0;i<lines.length;i++){
+                String[] values=lines[i].trim().replace(',','.').split("\\s+");
+                if(values.length!=2)throw new IllegalArgumentException("Expected two speeds");
+                measured[i]=Double.parseDouble(values[0]);reference[i]=Double.parseDouble(values[1]);
+            }
+            return fit(measured,reference);
+        }
     }
 }

@@ -54,16 +54,34 @@ public final class TripStore extends SQLiteOpenHelper {
     public synchronized long openTrip() {
         try(Cursor c=getReadableDatabase().rawQuery("SELECT id FROM trips WHERE end_at IS NULL ORDER BY id DESC LIMIT 1",null)) {return c.moveToFirst()?c.getLong(0):0;}
     }
-    public synchronized long startTrip(long at) {
-        ContentValues v=new ContentValues();v.put("start_at",at);
-        return getWritableDatabase().insertOrThrow("trips",null,v);
+    synchronized long startTrip(Fix initial){
+        SQLiteDatabase db=getWritableDatabase();
+        db.beginTransaction();
+        try{
+            ContentValues trip=new ContentValues();
+            trip.put("start_at",initial.time);
+            long id=db.insertOrThrow("trips",null,trip);
+            insertPoint(db,id,initial,-1f);
+            db.setTransactionSuccessful();
+            return id;
+        }finally{db.endTransaction();}
     }
-    public synchronized void addPoint(long trip,Fix f,float speed) {
-        ContentValues v=new ContentValues();v.put("trip_id",trip);v.put("t",f.time);v.put("lat",f.lat);v.put("lon",f.lon);v.put("accuracy",f.accuracy);v.put("speed",speed);
-        getWritableDatabase().insertOrThrow("points",null,v);
+    private void insertPoint(SQLiteDatabase db,long trip,Fix f,float speed){
+        ContentValues point=new ContentValues();
+        point.put("trip_id",trip);point.put("t",f.time);
+        point.put("lat",f.lat);point.put("lon",f.lon);point.put("accuracy",f.accuracy);
+        if(speed>=0)point.put("speed",speed);
+        db.insertOrThrow("points",null,point);
     }
-    public synchronized void addDistance(long trip,double meters) {
-        if (meters>0) getWritableDatabase().execSQL("UPDATE trips SET distance_m=distance_m+? WHERE id=?",new Object[]{meters,trip});
+    synchronized void addPoint(long trip,Fix f,float speed,double meters){
+        SQLiteDatabase db=getWritableDatabase();
+        db.beginTransaction();
+        try{
+            insertPoint(db,trip,f,speed);
+            if(meters>0)db.execSQL("UPDATE trips SET distance_m=distance_m+? WHERE id=?",
+                new Object[]{meters,trip});
+            db.setTransactionSuccessful();
+        }finally{db.endTransaction();}
     }
     public synchronized double distance(long trip) {
         try(Cursor c=getReadableDatabase().rawQuery("SELECT distance_m FROM trips WHERE id=?",new String[]{Long.toString(trip)})) {return c.moveToFirst()?c.getDouble(0):0;}
@@ -123,11 +141,74 @@ public final class TripStore extends SQLiteOpenHelper {
         }
         return sb.length()==0?"Пока нет записанных поездок":sb.toString().trim();
     }
+    static final class TripSpan {
+        final long start,end;
+        final double meters;
+        TripSpan(long start,long end,double meters){
+            this.start=start;this.end=end;this.meters=meters;
+        }
+    }
+    synchronized TripSpan latestLongTrip(long from,long until){
+        try(Cursor c=getReadableDatabase().rawQuery(
+            "SELECT start_at,end_at,distance_m FROM trips WHERE start_at>=? AND end_at<=? "+
+            "AND distance_m>=20000 ORDER BY end_at DESC LIMIT 1",
+            new String[]{Long.toString(from),Long.toString(until)})){
+            return c.moveToFirst()?new TripSpan(c.getLong(0),c.getLong(1),c.getDouble(2)):null;
+        }
+    }
+    static final class RoutePoint {
+        final long time;
+        final double lat,lon,speed;
+        RoutePoint(long time,double lat,double lon,double speed){
+            this.time=time;this.lat=lat;this.lon=lon;this.speed=speed;
+        }
+    }
+    static final class Route {
+        final java.util.List<RoutePoint> points=new java.util.ArrayList<>();
+        final java.util.List<RoutePoint> stops=new java.util.ArrayList<>();
+        double meters;
+        long start,end;
+        boolean truncated;
+    }
+    synchronized java.util.Map<Long,String> routeChoices(){
+        java.util.Map<Long,String> choices=new java.util.LinkedHashMap<>();
+        try(Cursor c=getReadableDatabase().rawQuery(
+            "SELECT id,start_at,distance_m FROM trips ORDER BY id DESC LIMIT 100",null)){
+            SimpleDateFormat format=new SimpleDateFormat("dd.MM.yyyy HH:mm",Locale.getDefault());
+            while(c.moveToNext())choices.put(c.getLong(0),String.format(Locale.getDefault(),
+                "%s · %.2f км",format.format(new Date(c.getLong(1))),c.getDouble(2)/1000));
+        }
+        return choices;
+    }
+    synchronized Route route(long trip){
+        Route route=new Route();
+        String[] args={Long.toString(trip)};
+        SQLiteDatabase db=getReadableDatabase();
+        try(Cursor c=db.rawQuery("SELECT start_at,end_at,distance_m FROM trips WHERE id=?",args)){
+            if(c.moveToFirst()){
+                route.start=c.getLong(0);route.end=c.getLong(1);route.meters=c.getDouble(2);
+            }
+        }
+        try(Cursor c=db.rawQuery("SELECT t,lat,lon,speed FROM points WHERE trip_id=? "+
+            "ORDER BY t,id LIMIT 12001",args)){
+            while(c.moveToNext()){
+                if(route.points.size()==12000){route.truncated=true;break;}
+                route.points.add(new RoutePoint(c.getLong(0),c.getDouble(1),c.getDouble(2),
+                    c.isNull(3)?Double.NaN:c.getDouble(3)));
+            }
+        }
+        try(Cursor c=db.rawQuery("SELECT start_at,lat,lon FROM stops WHERE trip_id=? "+
+            "AND lat IS NOT NULL AND lon IS NOT NULL ORDER BY start_at LIMIT 1000",args)){
+            while(c.moveToNext())route.stops.add(new RoutePoint(
+                c.getLong(0),c.getDouble(1),c.getDouble(2),Double.NaN));
+        }
+        return route;
+    }
     private static String csvDouble(double x){return String.format(Locale.US,"%.6f",x);}
     public synchronized String exportCsv() {
         StringBuilder sb=new StringBuilder("trip_id,time_iso,latitude,longitude,accuracy_m,speed_m_s\n");
         try(Cursor c=getReadableDatabase().rawQuery("SELECT trip_id,t,lat,lon,accuracy,speed FROM points ORDER BY trip_id,t",null)) {
-            while(c.moveToNext()) sb.append(c.getLong(0)).append(',').append(iso(c.getLong(1))).append(',').append(csvDouble(c.getDouble(2))).append(',').append(csvDouble(c.getDouble(3))).append(',').append(csvDouble(c.getDouble(4))).append(',').append(csvDouble(c.getDouble(5))).append('\n');
+            while(c.moveToNext()) sb.append(c.getLong(0)).append(',').append(iso(c.getLong(1))).append(',').append(csvDouble(c.getDouble(2))).append(',').append(csvDouble(c.getDouble(3))).append(',').append(csvDouble(c.getDouble(4))).append(',').append(c.isNull(5)?"":csvDouble(c.getDouble(5))).append('\n');
         }
         return sb.toString();
     }
@@ -164,6 +245,26 @@ public final class TripStore extends SQLiteOpenHelper {
         }
         if(previous!=-1)sb.append("</trkseg></trk>\n");
         return sb.append("</gpx>\n").toString();
+    }
+    /** Stream individual recorded fixes, preserving time and optional speed. */
+    void writeGeoJson(java.io.OutputStream output) throws java.io.IOException {
+        android.util.JsonWriter json=new android.util.JsonWriter(
+            new java.io.OutputStreamWriter(output,java.nio.charset.StandardCharsets.UTF_8));
+        json.beginObject().name("type").value("FeatureCollection").name("features").beginArray();
+        try(Cursor cursor=getReadableDatabase().rawQuery(
+            "SELECT trip_id,t,lat,lon,accuracy,speed FROM points ORDER BY trip_id,t,id",null)){
+            while(cursor.moveToNext()){
+                json.beginObject().name("type").value("Feature").name("geometry").beginObject()
+                    .name("type").value("Point").name("coordinates").beginArray()
+                    .value(cursor.getDouble(3)).value(cursor.getDouble(2)).endArray().endObject()
+                    .name("properties").beginObject().name("trip_id").value(cursor.getLong(0))
+                    .name("time").value(iso(cursor.getLong(1)));
+                if(!cursor.isNull(4))json.name("accuracy_m").value(cursor.getDouble(4));
+                if(!cursor.isNull(5))json.name("speed_m_s").value(cursor.getDouble(5));
+                json.endObject().endObject();
+            }
+        }
+        json.endArray().endObject();json.flush();
     }
     public synchronized String exportDiagnostics(Context context) {
         JSONObject j=new JSONObject();

@@ -275,8 +275,9 @@ public final class VehicleProbe {
     private static String humanize(String name,Object raw){
         if(raw==null)return "null";
         if("PERF_VEHICLE_SPEED".equals(name)&&raw instanceof Number){
-            double ms=((Number)raw).doubleValue();
-            return String.format(Locale.US,"%.1f км/ч (%.3f м/с)",ms*3.6,ms);
+            double speed=((Number)raw).doubleValue();
+            return String.format(Locale.US,"%.1f км/ч (Humax R2, raw=%s)",
+                VehicleDisplayFormat.speedKmh(speed,"property"),raw);
         }
         if(raw.getClass().isArray()){
             int n=Array.getLength(raw);List<String> parts=new ArrayList<>();

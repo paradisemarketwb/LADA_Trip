@@ -64,8 +64,7 @@ public final class CanJourneyStore extends SQLiteOpenHelper {
         }
         long delta=lastElapsed<=0?0:elapsed-lastElapsed;
         if(delta>0&&delta<=12000&&lastClock>0){
-            double mean=(previousKmh+kmh)/2.0;
-            double distance=mean*delta/3600.0;
+            double distance=VehicleDisplayFormat.integratedMeters(previousKmh,kmh,delta);
             // Skip unrealistic acceleration/jumps from a broken signal.
             if(Math.abs(kmh-previousKmh)<=70 || delta>=3000){
                 getWritableDatabase().execSQL(

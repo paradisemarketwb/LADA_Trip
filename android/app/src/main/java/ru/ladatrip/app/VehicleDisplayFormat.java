@@ -66,6 +66,13 @@ public final class VehicleDisplayFormat {
      * In measured Humax R2 vehicle-property output speed is already km/h.
      * Sensor-manager speed is a separate path and uses Android's m/s contract.
      */
+    /** Metres from consecutive CAN speeds in km/h and elapsed milliseconds. */
+    public static double integratedMeters(double previous,double current,long elapsedMs){
+        if(!Double.isFinite(previous)||!Double.isFinite(current)||
+            previous<0||current<0||previous>240||current>240||
+            elapsedMs<=0||elapsedMs>12000)return 0;
+        return ((previous+current)/2.0)*elapsedMs/3600.0;
+    }
     public static double speedKmh(double raw,String source){
         if(!Double.isFinite(raw)||raw<0)return Double.NaN;
         return "sensor".equals(source)?raw*3.6:raw;

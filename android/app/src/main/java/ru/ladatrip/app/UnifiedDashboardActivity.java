@@ -127,6 +127,7 @@ public final class UnifiedDashboardActivity extends Activity {
         hero.addView(speedOrigin);
         status=txt("Мониторинг ещё не запущен",13,WHITE,true);
         hero.addView(status,spaced(14,5));
+        hero.addView(txt("«Начать всё» включает автоматическую запись после включения автомобиля. «Стоп» отключает её.",11,Color.rgb(183,208,236),false),spaced(4,3));
 
         LinearLayout actions=row();hero.addView(actions,spaced(10,0));
         Button go=button("▶ Начать всё",true);
@@ -281,6 +282,10 @@ public final class UnifiedDashboardActivity extends Activity {
     }
     private void enableAll(){
         userStarting=false;
+        // One-time opt-in starts both monitors on future Android boots.
+        Settings.autoStart(this,true);
+        getSharedPreferences("vehicle_live_settings",MODE_PRIVATE).edit()
+            .putBoolean("auto_with_gps",true).apply();
         try{startForegroundService(new Intent(this,VehicleLiveService.class));}
         catch(Exception e){toast("CAN: "+e.getClass().getSimpleName());}
         if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED){
@@ -295,6 +300,9 @@ public final class UnifiedDashboardActivity extends Activity {
     }
     private void stopAll(){
         Settings.monitor(this,false);
+        Settings.autoStart(this,false);
+        getSharedPreferences("vehicle_live_settings",MODE_PRIVATE).edit()
+            .putBoolean("auto_with_gps",false).apply();
         Intent gps=new Intent(this,TripService.class).setAction(TripService.ACTION_STOP);
         Intent can=new Intent(this,VehicleLiveService.class).setAction(VehicleLiveService.ACTION_STOP);
         try{startService(gps);startService(can);}

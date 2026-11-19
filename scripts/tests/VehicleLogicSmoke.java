@@ -23,6 +23,8 @@ public final class VehicleLogicSmoke {
         assertEq(34.0,VehicleDisplayFormat.speedKmh(34.0,"property"),"R2 raw km/h no extra x3.6");
         assertTrue(Math.abs(VehicleDisplayFormat.speedKmh(9.45,"sensor")-34.02)<.01,
             "CarSensor fallback m/s to km/h");
+        assertEq(50.0,VehicleDisplayFormat.integratedMeters(50,50,3600),"CAN distance in meters");
+        assertEq(0.0,VehicleDisplayFormat.integratedMeters(50,50,30000),"Long stale sample ignored");
         assertEq("Затянут",VehicleDisplayFormat.state("HANDBRAKE","1","sensor"),"Handbrake on");
         assertEq("Отпущен",VehicleDisplayFormat.state("HANDBRAKE","0","sensor"),"Handbrake off");
         assertEq("Включено",VehicleDisplayFormat.state("IGNITION","4","property"),"Ignition on");

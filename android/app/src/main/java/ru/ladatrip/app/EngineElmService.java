@@ -93,6 +93,8 @@ public final class EngineElmService extends Service {
                 if(rpm!=null){
                     VehicleLog.put(this,"elm","RPM",String.format(Locale.US,"%.0f",rpm),
                         "ELM327 Bluetooth · OBD-II Mode 01 PID 0C");
+                    VehicleLog.put(this,"elm","ENGINE",rpm>=250?"Работает":"Выключен",
+                        "Derived from confirmed ELM327 RPM; no assumption from ignition.");
                 }else status("Нет корректного RPM в ответе ELM327 (010C)");
                 String coolantReply=execute(out,in,"0105",3500);
                 Double coolant=decodeCoolant(coolantReply);

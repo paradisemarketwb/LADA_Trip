@@ -29,6 +29,14 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
+      - name: Test automotive contracts (no device required)
+        run: |
+          mkdir -p "$RUNNER_TEMP/vehicle-tests"
+          javac -encoding UTF-8 -d "$RUNNER_TEMP/vehicle-tests" \
+            android/app/src/main/java/ru/ladatrip/app/HumaxCanTextParser.java \
+            android/app/src/main/java/ru/ladatrip/app/VehicleDisplayFormat.java \
+            scripts/tests/VehicleLogicSmoke.java
+          java -cp "$RUNNER_TEMP/vehicle-tests" ru.ladatrip.app.VehicleLogicSmoke
       - name: Install Android SDK packages
         run: |
           SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
@@ -39,6 +47,11 @@ jobs:
       - name: Build both debug APKs
         working-directory: android
         run: gradle --no-daemon --stacktrace --console plain :app:assembleDebug :probe:assembleDebug
+      - name: Verify main APK size and ZIP integrity
+        run: |
+          test -s android/app/build/outputs/apk/debug/app-debug.apk
+          unzip -t android/app/build/outputs/apk/debug/app-debug.apk >/dev/null
+          sha256sum android/app/build/outputs/apk/debug/app-debug.apk
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:

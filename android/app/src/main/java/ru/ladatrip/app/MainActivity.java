@@ -116,7 +116,10 @@ public final class MainActivity extends Activity {
         Button gpx=button("Маршруты  ·  GPX",false);export.addView(gpx,lp(0,8));gpx.setOnClickListener(v->save("lada-trip-routes.gpx","application/gpx+xml",store.exportGpx()));
         Button diagnostic=button("Диагностический отчёт  ·  JSON",false);export.addView(diagnostic);
         diagnostic.setOnClickListener(v->save("lada-trip-diagnostics.json","application/json",store.exportDiagnostics(this)));
-        root.addView(text("LADA Trip v0.5 · GPS + данные автомобиля · Android 9",12,MUTED,false),lp(20,0));
+        Button home=button("На главный экран LADA Trip",true);
+        root.addView(home,lp(12,8));
+        home.setOnClickListener(v->startActivity(new Intent(this,UnifiedDashboardActivity.class)));
+        root.addView(text("LADA Trip v1.0 · CAN + GPS + ELM327 · Android 9",12,MUTED,false),lp(20,0));
         refresh();
     }
     private LinearLayout row(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.HORIZONTAL);return l;}

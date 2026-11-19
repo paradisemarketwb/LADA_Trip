@@ -178,7 +178,7 @@ public final class UnifiedDashboardActivity extends Activity {
             "Без секретных ключей и географических координат");
         Button report=button("Сохранить единый отчёт JSON",true);
         tools.addView(report,spaced(11,5));report.setOnClickListener(v->
-            save("lada-trip-full-diagnostics.json","application/json",UnifiedDiagnostics.build(this).toString(2)));
+            save("lada-trip-full-diagnostics.json","application/json",UnifiedDiagnostics.build(this).toString()));
         Button canCsv=button("Сохранить поездки CAN · CSV",false);
         tools.addView(canCsv,spaced(5,5));canCsv.setOnClickListener(v->
             save("lada-trip-can-trips.csv","text/csv",journeys.exportCsv()));

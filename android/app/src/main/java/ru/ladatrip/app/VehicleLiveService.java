@@ -67,6 +67,8 @@ public final class VehicleLiveService extends Service {
     private ScheduledExecutorService executor;
     private ServiceConnection serviceConnection;
     private int connectionFailures;
+    private CanJourneyStore canTrips;
+    private long lastReconnectAttempt;
     @Override public void onCreate(){
         super.onCreate();
         NotificationManager nm=(NotificationManager)getSystemService(NOTIFICATION_SERVICE);
@@ -78,6 +80,7 @@ public final class VehicleLiveService extends Service {
             .setContentText("Чтение CarService, без команд автомобилю")
             .setContentIntent(open).setOngoing(true).build();
         startForeground(NOTIFICATION_ID,n);
+        canTrips=new CanJourneyStore(this);
         VehicleLog.running(this,true);
         VehicleLog.state(this,"Подключение к Android CarService");
         executor=Executors.newSingleThreadScheduledExecutor();
@@ -152,8 +155,28 @@ public final class VehicleLiveService extends Service {
             if(!connected||propertyManager==null){
                 if(++connectionFailures%10==1)
                     VehicleLog.state(this,connected?"CarPropertyManager недоступен":"Ожидаем подключение CarService");
+                if(!connected && System.currentTimeMillis()-lastReconnectAttempt>30000){
+                    lastReconnectAttempt=System.currentTimeMillis();
+                    if(car!=null)try{car.getClass().getMethod("disconnect").invoke(car);}
+                        catch(Throwable ignored){}
+                    car=null;
+                    new Handler(Looper.getMainLooper()).post(this::connect);
+                }
             }else{connectionFailures=0;pollProperties();}
             if(sensorManager!=null)pollSensors();
+            // Independent distance-only trip recording while GPS is unavailable.
+            long speedAt=VehicleLog.at(this,"SPEED");
+            if(speedAt>0 && System.currentTimeMillis()-speedAt<6000 && canTrips!=null){
+                try{
+                    double kmh=Double.parseDouble(VehicleLog.value(this,"SPEED"));
+                    Integer ignition=null;
+                    long ignitionAt=VehicleLog.at(this,"IGNITION");
+                    if(ignitionAt>0&&System.currentTimeMillis()-ignitionAt<30000)
+                        try{ignition=Integer.parseInt(VehicleLog.value(this,"IGNITION"));}
+                        catch(NumberFormatException ignored){}
+                    canTrips.sample(kmh,ignition);
+                }catch(NumberFormatException ignored){}
+            }
         }catch(Throwable t){VehicleLog.state(this,"Ошибка чтения: "+describe(t));}
     }
     private void pollProperties(){
@@ -246,6 +269,7 @@ public final class VehicleLiveService extends Service {
     @Override public void onDestroy(){
         VehicleLog.running(this,false);
         if(executor!=null)executor.shutdownNow();
+        if(canTrips!=null){try{canTrips.finish();}finally{canTrips.close();canTrips=null;}}
         if(car!=null)try{car.getClass().getMethod("disconnect").invoke(car);}catch(Throwable ignored){}
         super.onDestroy();
     }

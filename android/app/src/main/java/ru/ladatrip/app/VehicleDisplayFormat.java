@@ -18,6 +18,11 @@ public final class VehicleDisplayFormat {
             default:return false;
         }
     }
+    static boolean hasArea(int[] areas,int requested){
+        if(areas==null)return false;
+        for(int area:areas)if(area==requested)return true;
+        return false;
+    }
     public static String state(String key,String raw,String source){
         if(raw==null||raw.isEmpty()||raw.equals("—"))return "—";
         if("HANDBRAKE".equals(key)){
@@ -59,13 +64,39 @@ public final class VehicleDisplayFormat {
             if(raw.startsWith("Open")||raw.startsWith("Unlocked"))return male?"Открыт":"Открыта";
             if(raw.startsWith("Unknown"))return "Неизвестно";
         }
+        if("property".equals(source)){
+            if(key.endsWith("_DOOR")||"HOOD".equals(key)||"TAIL_GATE".equals(key)){
+                boolean male="HOOD".equals(key)||"TAIL_GATE".equals(key);
+                if("3".equals(raw))return "Не используется";
+                if("1".equals(raw))return male?"Закрыт":"Закрыта";
+                if("2".equals(raw))return male?"Открыт":"Открыта";
+                return "Неизвестно · "+raw;
+            }
+            if("ENGINE".equals(key)&&"7".equals(raw))return "Работает";
+            if("ENGINE".equals(key)&&"9".equals(raw))return "Выключен";
+            if("REVERSE".equals(key)){
+                if("2".equals(raw))return "Включена";
+                if("1".equals(raw))return "Выключена";
+                if("0".equals(raw))return "Не используется";
+                return "Неизвестно · "+raw;
+            }
+            if("ALARM".equals(key)){
+                switch(raw){
+                    case "0":return "Снята с охраны";
+                    case "1":return "Снята с охраны после тревоги";
+                    case "2":return "Снята с охраны · ожидание двери";
+                    case "3":return "Под охраной";
+                    case "4":return "Под охраной · открыт периметр";
+                    case "5":return "Задержка постановки на охрану";
+                    case "6":return "Под охраной без багажника";
+                    case "7":return "Тревога";
+                    default:return "Неизвестно · "+raw;
+                }
+            }
+        }
         if("GEAR".equals(key)&&"sensor".equals(source))return "Код "+raw;
         return raw;
     }
-    /**
-     * In measured Humax R2 vehicle-property output speed is already km/h.
-     * Sensor-manager speed is a separate path and uses Android's m/s contract.
-     */
     /** Metres from consecutive CAN speeds in km/h and elapsed milliseconds. */
     public static double integratedMeters(double previous,double current,long elapsedMs){
         if(!Double.isFinite(previous)||!Double.isFinite(current)||
@@ -73,8 +104,60 @@ public final class VehicleDisplayFormat {
             elapsedMs<=0||elapsedMs>12000)return 0;
         return ((previous+current)/2.0)*elapsedMs/3600.0;
     }
+    /**
+     * In measured Humax R2 vehicle-property output speed is already km/h.
+     * Sensor-manager speed is a separate path and uses Android's m/s contract.
+     */
     public static double speedKmh(double raw,String source){
         if(!Double.isFinite(raw)||raw<0)return Double.NaN;
-        return "sensor".equals(source)?raw*3.6:raw;
+        switch(source){
+            case "sensor": return raw*3.6;
+            case "property":
+            case "ui": return raw;
+            default: return Double.NaN;
+        }
+    }
+
+    public static final class SpeedCalibration {
+        public final double factor, offset;
+        private SpeedCalibration(double factor,double offset){
+            if(!Double.isFinite(factor)||factor<=0||!Double.isFinite(offset))
+                throw new IllegalArgumentException("Invalid calibration");
+            this.factor=factor;this.offset=offset;
+        }
+        public double correct(double speed){
+            if(!Double.isFinite(speed)||speed<0)return Double.NaN;
+            return speed==0?0:Math.max(0,speed*factor+offset);
+        }
+        /** Least-squares fit for control points expressed in km/h. */
+        public static SpeedCalibration fit(double[] measured,double[] reference){
+            if(measured.length!=reference.length||measured.length<2)
+                throw new IllegalArgumentException("Two distinct control points required");
+            double x=0,y=0;
+            for(int i=0;i<measured.length;i++){
+                if(!Double.isFinite(measured[i])||!Double.isFinite(reference[i])||
+                    measured[i]<0||reference[i]<0||measured[i]>240||reference[i]>240)
+                    throw new IllegalArgumentException("Control point outside 0–240 km/h");
+                x+=measured[i];y+=reference[i];
+            }
+            x/=measured.length;y/=measured.length;
+            double variance=0,covariance=0;
+            for(int i=0;i<measured.length;i++){
+                double dx=measured[i]-x;
+                variance+=dx*dx;covariance+=dx*(reference[i]-y);
+            }
+            double factor=covariance/variance;
+            return new SpeedCalibration(factor,y-factor*x);
+        }
+        public static SpeedCalibration parse(String input){
+            String[] lines=input.trim().split("\\r?\\n");
+            double[] measured=new double[lines.length],reference=new double[lines.length];
+            for(int i=0;i<lines.length;i++){
+                String[] values=lines[i].trim().replace(',','.').split("\\s+");
+                if(values.length!=2)throw new IllegalArgumentException("Expected two speeds");
+                measured[i]=Double.parseDouble(values[0]);reference[i]=Double.parseDouble(values[1]);
+            }
+            return fit(measured,reference);
+        }
     }
 }

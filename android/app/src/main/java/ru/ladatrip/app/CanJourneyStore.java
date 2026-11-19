@@ -20,10 +20,10 @@ public final class CanJourneyStore extends SQLiteOpenHelper {
     private long activeId, lastElapsed, stationaryAt, ignitionOffAt;
     private double previousKmh;
     private int consecutiveMoving;
-    private long lastClock;
+    private long lastSampleAt;
+    private String previousSource="";
     public CanJourneyStore(Context context){
         super(context,"lada-can-trips.db",null,1);
-        resume();
     }
     @Override public void onCreate(SQLiteDatabase db){
         db.execSQL("CREATE TABLE can_trips(id INTEGER PRIMARY KEY AUTOINCREMENT,"+
@@ -35,21 +35,26 @@ public final class CanJourneyStore extends SQLiteOpenHelper {
     @Override public void onUpgrade(SQLiteDatabase db,int oldVersion,int newVersion){
         throw new IllegalStateException("Migration needed");
     }
-    private void resume(){
+    void resumeRecording(){
         try(Cursor cursor=getWritableDatabase().rawQuery(
             "SELECT id,last_at FROM can_trips WHERE end_at IS NULL ORDER BY id DESC LIMIT 1",null)){
             if(cursor.moveToFirst()){
                 long id=cursor.getLong(0),t=cursor.getLong(1);
-                if(System.currentTimeMillis()-t<=60000)activeId=id;
+                if(VehicleDisplayFormat.fresh(t,System.currentTimeMillis(),60000))activeId=id;
                 else getWritableDatabase().execSQL(
                     "UPDATE can_trips SET end_at=last_at,status='interrupted' WHERE id=?",
                     new Object[]{id});
             }
         }catch(Exception e){android.util.Log.w("LadaCanTrip","Resume failure",e);}
     }
-    public synchronized void sample(double kmh,Integer ignition){
+    public synchronized void sample(double kmh,Integer ignition,String source,long sampleAt){
         long now=System.currentTimeMillis(),elapsed=SystemClock.elapsedRealtime();
         if(!Double.isFinite(kmh)||kmh<0||kmh>240)return;
+        boolean continuous=source.equals(previousSource) && sampleAt>lastSampleAt &&
+            sampleAt-lastSampleAt<=6000;
+        if(!continuous){
+            consecutiveMoving=0;stationaryAt=0;ignitionOffAt=0;
+        }
         boolean moving=kmh>3;
         boolean engineOff=ignition!=null&&(ignition==1||ignition==2);
         if(moving)consecutiveMoving++;else consecutiveMoving=0;
@@ -60,10 +65,10 @@ public final class CanJourneyStore extends SQLiteOpenHelper {
                 activeId=getWritableDatabase().insert("can_trips",null,v);
                 if(activeId<1){activeId=0;return;}
             }
-            lastElapsed=elapsed;lastClock=now;previousKmh=kmh;return;
+            lastElapsed=elapsed;lastSampleAt=sampleAt;previousSource=source;previousKmh=kmh;return;
         }
         long delta=lastElapsed<=0?0:elapsed-lastElapsed;
-        if(delta>0&&delta<=12000&&lastClock>0){
+        if(continuous&&delta>0&&delta<=12000){
             double distance=VehicleDisplayFormat.integratedMeters(previousKmh,kmh,delta);
             // Skip unrealistic acceleration/jumps from a broken signal.
             if(Math.abs(kmh-previousKmh)<=70 || delta>=3000){
@@ -84,8 +89,9 @@ public final class CanJourneyStore extends SQLiteOpenHelper {
         if((stationaryAt>0&&elapsed-stationaryAt>=8*60*1000L)||
             (ignitionOffAt>0&&elapsed-ignitionOffAt>=30000L)){
             finishAt(now,"complete");
+            return;
         }
-        lastElapsed=elapsed;lastClock=now;previousKmh=kmh;
+        lastElapsed=elapsed;lastSampleAt=sampleAt;previousSource=source;previousKmh=kmh;
     }
     public synchronized void finish(){
         if(activeId>0)finishAt(System.currentTimeMillis(),"stopped");
@@ -95,7 +101,7 @@ public final class CanJourneyStore extends SQLiteOpenHelper {
         getWritableDatabase().execSQL(
             "UPDATE can_trips SET end_at=?,last_at=?,status=? WHERE id=? AND end_at IS NULL",
             new Object[]{time,time,reason,activeId});
-        activeId=0;lastElapsed=0;lastClock=0;stationaryAt=0;ignitionOffAt=0;
+        activeId=0;lastElapsed=0;lastSampleAt=0;previousSource="";stationaryAt=0;ignitionOffAt=0;
         previousKmh=0;consecutiveMoving=0;
     }
     public synchronized JSONObject snapshot(){
@@ -103,7 +109,10 @@ public final class CanJourneyStore extends SQLiteOpenHelper {
         try{
             root.put("method","CAN speed integration (estimated, not GPS)");
             root.put("source","Humax R2 vehicle speed");
-            root.put("can_open_trip",activeId!=0);
+            try(Cursor open=getReadableDatabase().rawQuery(
+                "SELECT 1 FROM can_trips WHERE end_at IS NULL LIMIT 1",null)){
+                root.put("can_open_trip",open.moveToFirst());
+            }
             root.put("timestamp_ms",System.currentTimeMillis());
             JSONArray trips=new JSONArray();
             try(Cursor c=getReadableDatabase().rawQuery(

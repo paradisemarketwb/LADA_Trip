@@ -17,7 +17,6 @@ import android.view.Gravity;
 import android.view.View;
 import android.widget.Button;
 import android.widget.CheckBox;
-import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -35,7 +34,7 @@ public final class MainActivity extends Activity {
     private static final int NAVY=Color.rgb(19,31,50), BLUE=Color.rgb(58,103,205), MUTED=Color.rgb(103,116,136);
     private static final int BG=Color.rgb(244,247,251), WHITE=Color.WHITE;
     private TripStore store;
-    private TextView positionView,tripView,pendingView,historyView,gpsHealthView;
+    private TextView positionView,tripView,historyView,gpsHealthView;
     private String pendingExport;
     private Handler handler=new Handler(Looper.getMainLooper());
     private final Runnable refreshTimer=new Runnable(){@Override public void run(){refresh();handler.postDelayed(this,4000);}};
@@ -65,7 +64,6 @@ public final class MainActivity extends Activity {
 
         LinearLayout summary=card(root,"МОНИТОРИНГ И СВЯЗЬ");
         tripView=text("…",17,NAVY,true);summary.addView(tripView,lp(4,7));
-        pendingView=text("…",14,MUTED,false);summary.addView(pendingView);
         LinearLayout buttons=row();summary.addView(buttons,lp(16,0));
         Button start=button("▶ Старт GPS",true);buttons.addView(start,new LinearLayout.LayoutParams(0,dp(52),1));
         Button stop=button("■ Стоп",false);LinearLayout.LayoutParams bp=new LinearLayout.LayoutParams(0,dp(52),.6f);bp.leftMargin=dp(8);buttons.addView(stop,bp);
@@ -88,12 +86,6 @@ public final class MainActivity extends Activity {
         LinearLayout settings=card(root,"НАСТРОЙКИ");
         CheckBox auto=new CheckBox(this);auto.setText("Автозапуск мониторинга после включения");auto.setTextColor(NAVY);auto.setTextSize(14);auto.setChecked(Settings.autoStart(this));
         settings.addView(auto);auto.setOnCheckedChangeListener((buttonView,checked)->{Settings.autoStart(this,checked);toast(checked?"Автозапуск включён":"Автозапуск выключен");});
-        Button backend=button("Сервер и Telegram",false);settings.addView(backend,lp(8,0));backend.setOnClickListener(v->showServerDialog());
-        Button send=button("Отправить последнюю точку",false);settings.addView(send,lp(8,0));send.setOnClickListener(v->{
-            TripStore.Fix f=store.lastFix();if(f==null){toast("Сначала нужен GPS-сигнал");return;}
-            store.queue("location",f,0,0);DeliveryJob.schedule(this);toast("Сообщение поставлено в очередь");refresh();
-        });
-
         LinearLayout car=card(root,"АВТОМОБИЛЬ · LIVE");
         car.addView(text("Скорость, топливо, наружная температура, зажигание и доступные CAN-статусы. Данные записываются локально и отображаются с указанием источника.",13,MUTED,false));
         Button live=button("Открыть автомобильную панель  →",true);
@@ -101,7 +93,7 @@ public final class MainActivity extends Activity {
         live.setOnClickListener(v->startActivity(new Intent(this,VehicleDashboardActivity.class)));
 
         LinearLayout engineering=card(root,"ИНЖЕНЕРНАЯ ВЕРСИЯ");
-        engineering.addView(text("Автомобильные свойства, разрешения, CAN-сервис и инженерное меню — только чтение.\nGPS и Telegram работают отдельно.",13,MUTED,false));
+        engineering.addView(text("Автомобильные свойства, разрешения, CAN-сервис и инженерное меню — только чтение.",13,MUTED,false));
         Button probe=button("LADA Vehicle Probe  →",true);
         engineering.addView(probe,lp(12,0));
         probe.setOnClickListener(v->startActivity(new Intent(this,EngineeringActivity.class)));
@@ -114,6 +106,13 @@ public final class MainActivity extends Activity {
         stops.setOnClickListener(v->save("lada-trip-stops.csv","text/csv",store.exportStopsCsv()));
         Button csv=button("Все GPS-точки  ·  CSV",false);export.addView(csv,lp(0,8));csv.setOnClickListener(v->save("lada-trip-points.csv","text/csv",store.exportCsv()));
         Button gpx=button("Маршруты  ·  GPX",false);export.addView(gpx,lp(0,8));gpx.setOnClickListener(v->save("lada-trip-routes.gpx","application/gpx+xml",store.exportGpx()));
+        Button geo=button("GPS-точки · GeoJSON",false);export.addView(geo,lp(0,8));
+        geo.setOnClickListener(v->{
+            Intent pick=new Intent(Intent.ACTION_CREATE_DOCUMENT).setType("application/geo+json")
+                .addCategory(Intent.CATEGORY_OPENABLE).putExtra(Intent.EXTRA_TITLE,"lada-trip-points.geojson");
+            try{startActivityForResult(pick,1317);}
+            catch(Exception e){toast("Системное окно выбора файлов недоступно");}
+        });
         Button diagnostic=button("Диагностический отчёт  ·  JSON",false);export.addView(diagnostic);
         diagnostic.setOnClickListener(v->save("lada-trip-diagnostics.json","application/json",store.exportDiagnostics(this)));
         Button home=button("На главный экран LADA Trip",true);
@@ -136,8 +135,6 @@ public final class MainActivity extends Activity {
     private void refresh() {
         if(store==null || positionView==null)return;
         tripView.setText(Settings.monitor(this)?"●  Мониторинг включён":"○  Мониторинг выключен");
-        boolean server=Settings.server(this)!=null && Settings.token(this)!=null;
-        pendingView.setText("Ожидают отправки: "+store.countPending()+"   ·   Сервер: "+(server?"настроен":"не настроен"));
         TripStore.Fix f=store.lastFix();
         if(f==null)positionView.setText("Спутники ещё не обнаружены");
         else {
@@ -164,19 +161,6 @@ public final class MainActivity extends Activity {
         if(requestCode==LOCATION_CODE && grants.length>0 && grants[0]==PackageManager.PERMISSION_GRANTED)startMonitor();
         else if(requestCode==LOCATION_CODE)toast("Для журнала поездок необходим доступ к GPS");
     }
-    private void showServerDialog() {
-        LinearLayout l=column();l.setPadding(dp(18),dp(10),dp(18),0);
-        EditText url=new EditText(this);url.setSingleLine(true);url.setText(Settings.server(this)==null?"https://":Settings.server(this));url.setHint("https://trip.example.com");l.addView(text("HTTPS-адрес сервера",13,MUTED,false));l.addView(url);
-        EditText id=new EditText(this);id.setSingleLine(true);id.setText(Settings.device(this));l.addView(text("ID магнитолы",13,MUTED,false),lp(8,0));l.addView(id);
-        EditText token=new EditText(this);token.setSingleLine(true);token.setInputType(129);token.setHint(Settings.token(this)==null?"Ключ устройства":"Оставьте пустым, чтобы сохранить ключ");
-        l.addView(text("Ключ устройства (не токен Telegram!)",13,MUTED,false),lp(8,0));l.addView(token);
-        new AlertDialog.Builder(this).setTitle("Защищённая доставка").setView(l)
-            .setNegativeButton("Отмена",null).setPositiveButton("Сохранить",(dialog,which)->{
-                try{Settings.configure(this,url.getText().toString(),id.getText().toString(),token.getText().toString());
-                    DeliveryJob.schedule(this);toast("Настройки сохранены");refresh();
-                }catch(Exception e){new AlertDialog.Builder(this).setTitle("Не удалось сохранить").setMessage(e.getMessage()).setPositiveButton("ОК",null).show();}
-            }).show();
-    }
     private void save(String filename,String mime,String content) {
         pendingExport=content;
         Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT);i.setType(mime);i.addCategory(Intent.CATEGORY_OPENABLE);i.putExtra(Intent.EXTRA_TITLE,filename);
@@ -184,6 +168,17 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onActivityResult(int requestCode,int resultCode,Intent data) {
         super.onActivityResult(requestCode,resultCode,data);
+        if(requestCode==1317 && resultCode==RESULT_OK && data!=null && data.getData()!=null){
+            Uri target=data.getData();
+            new Thread(()->{
+                try(TripStore db=new TripStore(getApplicationContext());
+                    OutputStream out=getContentResolver().openOutputStream(target)){
+                    if(out==null)throw new IllegalStateException("No output stream");
+                    db.writeGeoJson(out);
+                    runOnUiThread(()->toast("GeoJSON сохранён"));
+                }catch(Exception e){runOnUiThread(()->toast("Не удалось сохранить GeoJSON"));}
+            },"lada-geojson-export").start();
+        }
         if(requestCode==SAVE_FILE_CODE && resultCode==RESULT_OK && data!=null && data.getData()!=null && pendingExport!=null){
             try(OutputStream out=getContentResolver().openOutputStream(data.getData())) {
                 if(out==null)throw new IllegalStateException("Нет доступа к файлу");

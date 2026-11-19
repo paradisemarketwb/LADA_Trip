@@ -30,8 +30,12 @@ public final class VehicleLiveService extends Service {
     private static final String CHANNEL="vehicle_live";
     private static final int NOTIFICATION_ID=184;
     private static final class Signal {
-        final String name,permission;final int id;
-        Signal(String n,int id,String permission){this.name=n;this.id=id;this.permission="android.car.permission."+permission;}
+        final String name,permission;final int id,area;
+        Signal(String name,int id,String permission){this(name,id,permission,0);}
+        Signal(String name,int id,String permission,int area){
+            this.name=name;this.id=id;this.area=area;
+            this.permission="android.car.permission."+permission;
+        }
     }
     private static final Signal[] PROPERTIES={
         new Signal("SPEED",0x11600207,"CAR_SPEED"),
@@ -45,7 +49,15 @@ public final class VehicleLiveService extends Service {
         new Signal("COOLANT_C",0x11600301,"CAR_ENGINE_DETAILED"),
         new Signal("ODOMETER",0x11600204,"CAR_MILEAGE"),
         new Signal("STEER_RAW",0x2140F006,"CAR_VENDOR_EXTENSION"),
-        new Signal("REVERSE",0x2140F003,"CAR_VENDOR_EXTENSION")
+        new Signal("REVERSE",0x2140F003,"CAR_VENDOR_EXTENSION"),
+        new Signal("ENGINE",0x2140F002,"CAR_VENDOR_EXTENSION"),
+        new Signal("ALARM",0x2140F001,"CAR_VENDOR_EXTENSION"),
+        new Signal("DRIVER_DOOR",0x16400B00,"CONTROL_CAR_DOORS",0x1),
+        new Signal("PASSENGER_DOOR",0x16400B00,"CONTROL_CAR_DOORS",0x4),
+        new Signal("REAR_LEFT_DOOR",0x16400B00,"CONTROL_CAR_DOORS",0x10),
+        new Signal("REAR_RIGHT_DOOR",0x16400B00,"CONTROL_CAR_DOORS",0x40),
+        new Signal("HOOD",0x16400B00,"CONTROL_CAR_DOORS",0x10000000),
+        new Signal("TAIL_GATE",0x16400B00,"CONTROL_CAR_DOORS",0x20000000)
     };
     private static final class Sensor {
         final String name; final int id;
@@ -60,6 +72,7 @@ public final class VehicleLiveService extends Service {
         new Sensor("HANDBRAKE",287310850),
         new Sensor("ODOMETER",291504644)
     };
+    private long lastTripSpeedAt;
     private volatile Object car,propertyManager,sensorManager;
     private volatile Map<Integer,Object> configurations=new HashMap<>();
     private volatile int[] supportedSensors=new int[0];
@@ -81,6 +94,7 @@ public final class VehicleLiveService extends Service {
             .setContentIntent(open).setOngoing(true).build();
         startForeground(NOTIFICATION_ID,n);
         canTrips=new CanJourneyStore(this);
+        canTrips.resumeRecording();
         VehicleLog.running(this,true);
         VehicleLog.state(this,"Подключение к Android CarService");
         executor=Executors.newSingleThreadScheduledExecutor();
@@ -165,16 +179,18 @@ public final class VehicleLiveService extends Service {
             }else{connectionFailures=0;pollProperties();}
             if(sensorManager!=null)pollSensors();
             // Independent distance-only trip recording while GPS is unavailable.
-            long speedAt=VehicleLog.at(this,"SPEED");
-            if(speedAt>0 && System.currentTimeMillis()-speedAt<6000 && canTrips!=null){
+            VehicleLog.Reading speed=VehicleLog.speed(this);
+            long now=System.currentTimeMillis();
+            if(canTrips!=null && speed.at!=lastTripSpeedAt &&
+                VehicleDisplayFormat.fresh(speed.at,now,6000)){
                 try{
-                    double kmh=Double.parseDouble(VehicleLog.value(this,"SPEED"));
+                    double kmh=Double.parseDouble(speed.value);
                     Integer ignition=null;
-                    long ignitionAt=VehicleLog.at(this,"IGNITION");
-                    if(ignitionAt>0&&System.currentTimeMillis()-ignitionAt<30000)
+                    if(VehicleDisplayFormat.fresh(VehicleLog.at(this,"IGNITION"),now,30000))
                         try{ignition=Integer.parseInt(VehicleLog.value(this,"IGNITION"));}
                         catch(NumberFormatException ignored){}
-                    canTrips.sample(kmh,ignition);
+                    canTrips.sample(kmh,ignition,speed.source,speed.at);
+                    lastTripSpeedAt=speed.at;
                 }catch(NumberFormatException ignored){}
             }
         }catch(Throwable t){VehicleLog.state(this,"Ошибка чтения: "+describe(t));}
@@ -187,20 +203,25 @@ public final class VehicleLiveService extends Service {
             Object config=cfgs.get(signal.id);
             if(config==null)continue;
             try{
+                if(signal.area!=0){
+                    int[] areas=(int[])config.getClass().getMethod("getAreaIds").invoke(config);
+                    if(!VehicleDisplayFormat.hasArea(areas,signal.area))continue;
+                }
                 Class<?> valueType=(Class<?>)config.getClass().getMethod("getPropertyType").invoke(config);
                 Object wrapper=propertyManager.getClass()
                     .getMethod("getProperty",Class.class,int.class,int.class)
-                    .invoke(propertyManager,valueType,signal.id,0);
+                    .invoke(propertyManager,valueType,signal.id,signal.area);
                 if(wrapper==null)continue;
                 int status=((Number)wrapper.getClass().getMethod("getStatus").invoke(wrapper)).intValue();
                 if(status!=0)continue;
                 Object raw=wrapper.getClass().getMethod("getValue").invoke(wrapper);
                 if(raw==null)continue;
                 String display=formatProperty(signal.name,raw);
+                if(display==null)continue;
                 VehicleLog.put(this,"property",signal.name,display,
                     "ID=0x"+Integer.toHexString(signal.id)+
-                        ("SPEED".equals(signal.name)?"; Humax R2 raw km/h (NO extra x3.6)":
-                        "; direct CarPropertyManager"));
+                        ("SPEED".equals(signal.name)?"; Humax R2; raw="+raw+" km/h":
+                        "; area=0x"+Integer.toHexString(signal.area)+"; direct CarPropertyManager"));
             }catch(Throwable t){
                 android.util.Log.w("LadaVehicle","Property "+signal.name+" unavailable: "+describe(t));
             }
@@ -211,7 +232,7 @@ public final class VehicleLiveService extends Service {
             double number=((Number)raw).doubleValue();
             // R2 Humax VHAL returns a speed matching km/h despite the AOSP m/s contract.
             // Road test: previous 122.5 in-app was 34.0 raw x 3.6, while dashboard showed 38.
-            if("SPEED".equals(name))return String.format(Locale.US,"%.1f",number);
+            if("SPEED".equals(name))return speedValue(number,"property");
             if("FUEL_L".equals(name)||"OUTSIDE_C".equals(name)||"COOLANT_C".equals(name))
                 return String.format(Locale.US,"%.1f",number);
             if("IGNITION".equals(name))return String.valueOf(((Number)raw).intValue());
@@ -243,7 +264,7 @@ public final class VehicleLiveService extends Service {
                 if(data==null)continue;
                 String value;
                 if("SPEED".equals(signal.name)&&data instanceof Number)
-                    value=String.format(Locale.US,"%.1f",((Number)data).doubleValue()*3.6);
+                    value=speedValue(((Number)data).doubleValue(),"sensor");
                 else if(("FUEL_L".equals(signal.name))&&data instanceof Number)
                     value=String.format(Locale.US,"%.1f",((Number)data).doubleValue());
                 else if("HANDBRAKE".equals(signal.name) && data instanceof Number){
@@ -251,12 +272,17 @@ public final class VehicleLiveService extends Service {
                     value=raw==1?"Затянут":raw==0?"Отпущен":"Неизвестный код "+raw;
                 }
                 else value=String.valueOf(data);
+                if(value==null)continue;
                 VehicleLog.put(this,"sensor",signal.name,value,
                     "CarSensorManager.getLatestSensorEvent("+signal.id+"); "+
                         ("HANDBRAKE".equals(signal.name)?"parking intValues[0] 1=applied,0=not applied; raw="+data:
-                        "raw sensor data="+data));
+                        "raw sensor data="+data+("SPEED".equals(signal.name)?" m/s":"")));
             }catch(Throwable t){android.util.Log.d("LadaVehicle","Sensor "+signal.name+" unavailable: "+describe(t));}
         }
+    }
+    private static String speedValue(double raw,String source){
+        double kmh=VehicleDisplayFormat.speedKmh(raw,source);
+        return Double.isFinite(kmh)?String.format(Locale.US,"%.1f",kmh):null;
     }
     private static String describe(Throwable t){
         while(t instanceof InvocationTargetException&&((InvocationTargetException)t).getCause()!=null)

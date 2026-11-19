@@ -25,6 +25,7 @@ public final class UnifiedDiagnostics {
                 long time=VehicleLog.at(context,key);
                 state.put("value",VehicleLog.value(context,key));
                 state.put("source",source);
+                state.put("source_note",VehicleLog.note(context,key));
                 state.put("at_ms",time);
                 state.put("fresh",VehicleDisplayFormat.fresh(time,now,12000));
                 state.put("last_visible_ui_only","ui".equals(source)&&!VehicleDisplayFormat.fresh(time,now,12000));

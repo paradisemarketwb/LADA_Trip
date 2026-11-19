@@ -13,8 +13,6 @@ import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.location.GnssStatus;
-import android.net.ConnectivityManager;
-import android.net.Network;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.os.Handler;
@@ -27,10 +25,8 @@ public final class TripService extends Service implements LocationListener {
     private static final int MONITOR_ID=175;
     private TripStore db;
     private TripRecorder recorder;
+    private final GpsSpeedReference speedReference=new GpsSpeedReference();
     private LocationManager location;
-    private ConnectivityManager connectivity;
-    private ConnectivityManager.NetworkCallback networkCallback;
-    private boolean networkAvailable=false,waitingForFreshFix=false;
     private boolean gpsSubscribed=false;
     private GnssStatus.Callback gnssCallback;
     private boolean gnssRegistered=false;
@@ -39,16 +35,12 @@ public final class TripService extends Service implements LocationListener {
         super.onCreate();
         GpsHealth.start(this);
         db=new TripStore(this);
-        recorder=new TripRecorder(db,type->{
-            notifyTrip(type);
-            DeliveryJob.schedule(this);
-        });
+        recorder=new TripRecorder(db,this::notifyTrip);
         NotificationManager nm=(NotificationManager)getSystemService(NOTIFICATION_SERVICE);
         nm.createNotificationChannel(new NotificationChannel(CHANNEL,"LADA Trip — GPS",NotificationManager.IMPORTANCE_LOW));
         nm.createNotificationChannel(new NotificationChannel(EVENTS,"LADA Trip — поездки",NotificationManager.IMPORTANCE_DEFAULT));
         startForeground(MONITOR_ID,createNotification("Ожидание координат GPS"));
         subscribeGps();
-        subscribeNetwork();
         if(getSharedPreferences("vehicle_live_settings",MODE_PRIVATE).getBoolean("auto_with_gps",false)){
             try{startForegroundService(new Intent(this,VehicleLiveService.class));}
             catch(Exception e){android.util.Log.w("LadaTrip","Vehicle monitor autostart failed",e);}
@@ -69,7 +61,7 @@ public final class TripService extends Service implements LocationListener {
     }
     @Override public int onStartCommand(Intent intent,int flags,int startId) {
         if(intent!=null && ACTION_STOP.equals(intent.getAction())) {
-            recorder.stop();Settings.monitor(this,false);DeliveryJob.schedule(this);stopForeground(true);stopSelf();return START_NOT_STICKY;
+            recorder.stop();Settings.monitor(this,false);stopForeground(true);stopSelf();return START_NOT_STICKY;
         }
         if(!Settings.monitor(this)) {stopSelf();return START_NOT_STICKY;}
         subscribeGps();
@@ -83,12 +75,9 @@ public final class TripService extends Service implements LocationListener {
         location=(LocationManager)getSystemService(LOCATION_SERVICE);
         if(location==null){GpsHealth.registration(this,"LocationManager недоступен");return;}
         try{
-            if(!location.isProviderEnabled(LocationManager.GPS_PROVIDER)){
-                GpsHealth.registration(this,"GPS_PROVIDER выключен");return;
-            }
             location.requestLocationUpdates(LocationManager.GPS_PROVIDER,5000L,3f,this,Looper.getMainLooper());
             gpsSubscribed=true;
-            GpsHealth.registration(this,"GPS_PROVIDER: подписка зарегистрирована (5 с / 3 м)");
+            updateGpsRegistration();
             subscribeGnss();
         }catch(Exception e){
             GpsHealth.registration(this,"Ошибка GPS: "+e.getClass().getSimpleName());
@@ -114,68 +103,49 @@ public final class TripService extends Service implements LocationListener {
             if(!gnssRegistered)GpsHealth.gnss(this,"GNSS status callback не зарегистрирован");
         }catch(Exception e){GpsHealth.gnss(this,"GNSS status недоступен: "+e.getClass().getSimpleName());}
     }
-    private void subscribeNetwork() {
-        connectivity=(ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);
-        if(connectivity==null)return;
-        networkCallback=new ConnectivityManager.NetworkCallback() {
-            @Override public void onAvailable(Network n){new Handler(Looper.getMainLooper()).post(()->handleConnected());}
-            @Override public void onCapabilitiesChanged(Network n,android.net.NetworkCapabilities caps) {
-                // Captive portal / hotspot may transition to actually working internet later.
-                if(caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED))
-                    new Handler(Looper.getMainLooper()).post(()->{handleConnected();DeliveryJob.schedule(TripService.this);});
-            }
-            @Override public void onLost(Network n){new Handler(Looper.getMainLooper()).post(()->{networkAvailable=false;waitingForFreshFix=false;});}
-        };
-        try {connectivity.registerDefaultNetworkCallback(networkCallback);}
-        catch(Exception e){android.util.Log.w("LadaTrip","Network callback failed",e);}
-    }
-    private void handleConnected() {
-        if(networkAvailable)return;
-        networkAvailable=true;
-        TripStore.Fix last=db.lastFix();
-        long now=System.currentTimeMillis();
-        // Persisted cooldown also guards against duplicate startup callbacks.
-        long previous=0;
-        try{previous=Long.parseLong(db.get("network_event_at"));}catch(Exception ignored){}
-        if(now-previous>60000) {
-            if(last!=null && now-last.time<30*60*1000L) {
-                db.queue("location",last,0,0);
-                db.put("network_event_at",Long.toString(now));
-            } else waitingForFreshFix=true;
-        }
-        DeliveryJob.schedule(this);
-    }
     @Override public void onLocationChanged(Location fix) {
         GpsHealth.raw(this,fix);
         if(fix==null){GpsHealth.rejected(this,"Нет объекта Location");return;}
         if(!fix.hasAccuracy()){GpsHealth.rejected(this,"Нет информации о точности GPS");return;}
-        if(fix.getAccuracy()<0||fix.getAccuracy()>80){
+        if(!Float.isFinite(fix.getAccuracy())||fix.getAccuracy()<0||fix.getAccuracy()>80){
             GpsHealth.rejected(this,"Точность хуже 80 м: "+Math.round(fix.getAccuracy())+" м");return;
         }
-        long timeDifference=Math.abs(System.currentTimeMillis()-fix.getTime());
-        if(timeDifference>120000){
-            GpsHealth.rejected(this,"Устаревшая или будущая GPS-метка: "+timeDifference/1000+" с");return;
+        long ageNanos=android.os.SystemClock.elapsedRealtimeNanos()-fix.getElapsedRealtimeNanos();
+        if(fix.getElapsedRealtimeNanos()<=0||ageNanos<0||ageNanos>15_000_000_000L){
+            GpsHealth.rejected(this,"Устаревшая GPS-метка");return;
         }
-        GpsHealth.accepted(this);
-        recorder.take(fix);
-        if(waitingForFreshFix && networkAvailable) {
-            TripStore.Fix point=db.lastFix();
-            if(point!=null) {
-                db.queue("location",point,0,0);db.put("network_event_at",Long.toString(System.currentTimeMillis()));
-                waitingForFreshFix=false;DeliveryJob.schedule(this);
+        try{
+            if(!recorder.take(fix)){
+                GpsHealth.rejected(this,"Некорректная, повторная или скачкообразная GPS-точка");return;
             }
+        }catch(android.database.sqlite.SQLiteException error){
+            GpsHealth.rejected(this,"Ошибка записи SQLite: "+error.getClass().getSimpleName());
+            return;
         }
+        GpsHealth.accepted(this,fix);
+        speedReference.observe(this,fix);
         ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(MONITOR_ID,createNotification("GPS: ±"+Math.round(fix.getAccuracy())+" м"));
     }
     @Override public void onStatusChanged(String provider,int status,Bundle extras){}
-    @Override public void onProviderEnabled(String p){if(LocationManager.GPS_PROVIDER.equals(p))subscribeGps();}
-    @Override public void onProviderDisabled(String p){if(LocationManager.GPS_PROVIDER.equals(p)){gpsSubscribed=false;GpsHealth.registration(this,"GPS_PROVIDER выключен");}}
+    private void updateGpsRegistration(){
+        GpsHealth.registration(this,location.isProviderEnabled(LocationManager.GPS_PROVIDER)
+            ?"GPS_PROVIDER: подписка зарегистрирована (5 с / 3 м)"
+            :"GPS_PROVIDER выключен · ожидание включения");
+    }
+    @Override public void onProviderEnabled(String p){
+        if(LocationManager.GPS_PROVIDER.equals(p))updateGpsRegistration();
+    }
+    @Override public void onProviderDisabled(String p){
+        if(LocationManager.GPS_PROVIDER.equals(p)){
+            GpsHealth.clearSpeed(this);
+            updateGpsRegistration();
+        }
+    }
     @Override public void onDestroy() {
         GpsHealth.stop(this);
         if(location!=null && gnssRegistered && gnssCallback!=null)
             try{location.unregisterGnssStatusCallback(gnssCallback);}catch(Exception ignored){}
         if(location!=null && gpsSubscribed)try{location.removeUpdates(this);}catch(Exception ignored){}
-        if(connectivity!=null && networkCallback!=null)try{connectivity.unregisterNetworkCallback(networkCallback);}catch(Exception ignored){}
         if(db!=null)db.close();
         super.onDestroy();
     }

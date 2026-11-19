@@ -23,6 +23,13 @@ public final class VehicleLogicSmoke {
         assertEq(34.0,VehicleDisplayFormat.speedKmh(34.0,"property"),"R2 raw km/h no extra x3.6");
         assertTrue(Math.abs(VehicleDisplayFormat.speedKmh(9.45,"sensor")-34.02)<.01,
             "CarSensor fallback m/s to km/h");
+        assertEq(0.0,VehicleDisplayFormat.speedKmh(0,"property"),"Stationary Humax");
+        assertEq(0.0,VehicleDisplayFormat.speedKmh(0,"sensor"),"Stationary sensor");
+        assertEq(72.0,VehicleDisplayFormat.speedKmh(20,"sensor"),"Sensor at highway speed");
+        assertEq(72.0,VehicleDisplayFormat.speedKmh(72,"property"),"Same speed from property");
+        assertEq(72.0,VehicleDisplayFormat.speedKmh(72,"ui"),"Same speed from OEM text");
+        assertTrue(Double.isNaN(VehicleDisplayFormat.speedKmh(-1,"property")),"Negative reading rejected");
+        assertTrue(Double.isNaN(VehicleDisplayFormat.speedKmh(40,"unknown")),"Unknown units rejected");
         assertEq(50.0,VehicleDisplayFormat.integratedMeters(50,50,3600),"CAN distance in meters");
         assertEq(0.0,VehicleDisplayFormat.integratedMeters(50,50,30000),"Long stale sample ignored");
         assertEq("Затянут",VehicleDisplayFormat.state("HANDBRAKE","1","sensor"),"Handbrake on");
@@ -32,6 +39,18 @@ public final class VehicleLogicSmoke {
         assertEq("Неизвестно",VehicleDisplayFormat.state("HOOD","Unknown (0)","ui"),"Unknown state");
         assertTrue(VehicleDisplayFormat.fresh(1000,12000,12000),"Fresh <12s");
         assertTrue(!VehicleDisplayFormat.fresh(1000,13500,12000),"Old data not live");
+    }
+    private static void testSpeedCalibration(){
+        VehicleDisplayFormat.SpeedCalibration calibration=
+            VehicleDisplayFormat.SpeedCalibration.parse("20 23\r\n40 45\r\n60 67");
+        assertTrue(Math.abs(calibration.factor-1.1)<1e-9,"Fitted scale");
+        assertTrue(Math.abs(calibration.offset-1)<1e-9,"Fitted offset");
+        assertEq(0.0,calibration.correct(0),"No indicated motion at rest");
+        assertTrue(Math.abs(calibration.correct(50)-56)<1e-9,"Corrected speed");
+        boolean rejected=false;
+        try{VehicleDisplayFormat.SpeedCalibration.parse("20 20\n20 25");}
+        catch(IllegalArgumentException expected){rejected=true;}
+        assertTrue(rejected,"Duplicate inputs alone cannot yield a calibration");
     }
     private static void testAccessibility(){
         List<HumaxCanTextParser.TextCell> nodes=new ArrayList<>();
@@ -70,8 +89,20 @@ public final class VehicleLogicSmoke {
         assertEq("22.0",HumaxCanTextParser.parseCells(sameLine).get("SPEED"),"OEM speed inline");
         assertEq("42.0",HumaxCanTextParser.parseCells(sameLine).get("FUEL_L"),"OEM fuel inline");
     }
+    private static void testBackgroundBody(){
+        assertTrue(VehicleDisplayFormat.hasArea(new int[]{1,4},4),"Exact door zone");
+        assertTrue(!VehicleDisplayFormat.hasArea(new int[]{0x50},0x10),"Combined zone is not an individual door");
+        assertTrue(!VehicleDisplayFormat.hasArea(null,1),"Missing zone list");
+        assertEq("Открыта",VehicleDisplayFormat.state("DRIVER_DOOR","2","property"),"Open door");
+        assertEq("Закрыт",VehicleDisplayFormat.state("HOOD","1","property"),"Closed hood");
+        assertEq("Неизвестно · 0",VehicleDisplayFormat.state("TAIL_GATE","0","property"),"Unknown tail gate");
+        assertEq("Работает",VehicleDisplayFormat.state("ENGINE","7","property"),"Running engine");
+        assertEq("Включена",VehicleDisplayFormat.state("REVERSE","2","property"),"Reverse engaged");
+        assertEq("Выключена",VehicleDisplayFormat.state("REVERSE","1","property"),"Reverse disengaged");
+        assertEq("Тревога",VehicleDisplayFormat.state("ALARM","7","property"),"Active alarm");
+    }
     public static void main(String[] args){
-        testSpeed();testAccessibility();
+        testSpeed();testSpeedCalibration();testAccessibility();testBackgroundBody();
         System.out.println("Vehicle contract tests: "+checks+" passed.");
     }
 }

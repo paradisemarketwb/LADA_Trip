@@ -37,7 +37,18 @@ public final class VehicleLog extends SQLiteOpenHelper {
     public static boolean running(Context c){return prefs(c).getBoolean("monitor_running",false);}
     public static String value(Context c,String signal){return prefs(c).getString("value/"+signal,"—");}
     public static String source(Context c,String signal){return prefs(c).getString("source/"+signal,"");}
+    static String note(Context c,String signal){return prefs(c).getString("note/"+signal,"");}
     public static long at(Context c,String signal){return prefs(c).getLong("at/"+signal,0);}
+    static final class Reading {
+        final String value,source;
+        final long at;
+        Reading(String value,String source,long at){
+            this.value=value;this.source=source;this.at=at;
+        }
+    }
+    static synchronized Reading speed(Context c){
+        return new Reading(value(c,"SPEED"),source(c,"SPEED"),at(c,"SPEED"));
+    }
     public static String state(Context c){return prefs(c).getString("connection","не подключено");}
     public static void state(Context c,String message){prefs(c).edit().putString("connection",message).apply();}
     public static synchronized void put(Context ctx,String source,String signal,String value,String note){
@@ -56,8 +67,9 @@ public final class VehicleLog extends SQLiteOpenHelper {
         if("elm".equals(source)&&"property".equals(oldSource)&&now-oldAt<10000)return;
         if("ui".equals(source)&&"elm".equals(oldSource)&&now-oldAt<10000)return;
         boolean changed=!clean.equals(old)||!source.equals(oldSource);
+        String cleanNote=note==null?"":note.substring(0,Math.min(180,note.length()));
         sp.edit().putString("value/"+signal,clean).putString("source/"+signal,source)
-            .putLong("at/"+signal,now).apply();
+            .putString("note/"+signal,cleanNote).putLong("at/"+signal,now).apply();
         if(!changed && now-sp.getLong("logged/"+signal,0)<HEARTBEAT_MS)return;
         sp.edit().putLong("logged/"+signal,now).apply();
         try(VehicleLog helper=new VehicleLog(ctx)){
@@ -65,7 +77,7 @@ public final class VehicleLog extends SQLiteOpenHelper {
             ContentValues values=new ContentValues();
             values.put("at_ms",now);values.put("source",source);
             values.put("signal",signal);values.put("value",clean);
-            values.put("note",note==null?"":note.substring(0,Math.min(180,note.length())));
+            values.put("note",cleanNote);
             db.insert("readings",null,values);
             // Bound disk usage. Every insertion is small; expensive pruning only periodically.
             if(now-sp.getLong("last_trim",0)>60000){
@@ -73,6 +85,33 @@ public final class VehicleLog extends SQLiteOpenHelper {
                 sp.edit().putLong("last_trim",now).apply();
             }
         }catch(Exception e){android.util.Log.w("LadaVehicle","Local vehicle history failed",e);}
+    }
+    java.util.List<Reading> fuelHistory(long since,long until){
+        java.util.List<Reading> readings=new java.util.ArrayList<>();
+        try(Cursor cursor=getReadableDatabase().rawQuery(
+            "SELECT value,source,at_ms FROM readings WHERE signal='FUEL_L' AND at_ms>=? AND at_ms<? "+
+            "ORDER BY at_ms,id",new String[]{Long.toString(since),Long.toString(until)})){
+            while(cursor.moveToNext())readings.add(new Reading(
+                cursor.getString(0),cursor.getString(1),cursor.getLong(2)));
+        }
+        return readings;
+    }
+    String recentEntries(String source,String query){
+        String term="%"+query.replace("!","!!").replace("%","!%").replace("_","!_")+"%";
+        StringBuilder result=new StringBuilder();
+        java.text.DateFormat time=java.text.DateFormat.getDateTimeInstance(
+            java.text.DateFormat.SHORT,java.text.DateFormat.MEDIUM);
+        try(Cursor cursor=getReadableDatabase().rawQuery(
+            "SELECT at_ms,source,signal,value,note FROM readings WHERE (?='' OR source=?) "+
+            "AND (signal LIKE ? ESCAPE '!' OR value LIKE ? ESCAPE '!' OR note LIKE ? ESCAPE '!') "+
+            "ORDER BY id DESC LIMIT 200",new String[]{source,source,term,term,term})){
+            while(cursor.moveToNext()){
+                result.append(time.format(new java.util.Date(cursor.getLong(0)))).append(" · ")
+                    .append(cursor.getString(1)).append(" · ").append(cursor.getString(2)).append(" = ")
+                    .append(cursor.getString(3)).append("\n").append(cursor.getString(4)).append("\n\n");
+            }
+        }
+        return result.length()==0?"Нет подходящих записей.":result.toString();
     }
     private static boolean isKnown(String key){
         for(String name:SIGNALS)if(name.equals(key))return true;

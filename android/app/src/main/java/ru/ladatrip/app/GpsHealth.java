@@ -65,6 +65,15 @@ public final class GpsHealth {
         else edit.remove("speed_kmh");
         edit.apply();
     }
+    static String indicator(Context context,long now){
+        SharedPreferences p=preferences(context);
+        if(!p.getBoolean("service_running",false))return "GPS: выключен";
+        boolean fixed=VehicleDisplayFormat.fresh(p.getLong("last_valid_at",0),now,15000);
+        int used=p.getInt("satellites_used",0),seen=p.getInt("satellites_seen",0);
+        boolean recent=VehicleDisplayFormat.fresh(p.getLong("satellite_last_at",0),now,15000);
+        return "GPS: "+(fixed?"координаты получены":"поиск координат")+
+            (recent?" · спутники "+used+"/"+seen:"");
+    }
     static void clearSpeed(Context c){preferences(c).edit().remove("speed_kmh").apply();}
     static float freshSpeed(Context c,long now){
         SharedPreferences sp=preferences(c);

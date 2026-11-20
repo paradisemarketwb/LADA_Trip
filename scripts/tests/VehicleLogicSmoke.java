@@ -101,8 +101,33 @@ public final class VehicleLogicSmoke {
         assertEq("Выключена",VehicleDisplayFormat.state("REVERSE","1","property"),"Reverse disengaged");
         assertEq("Тревога",VehicleDisplayFormat.state("ALARM","7","property"),"Active alarm");
     }
+    private static void testManualCorrection(){
+        VehicleDisplayFormat.SpeedCalibration manual=VehicleDisplayFormat.SpeedCalibration.manual(1.05,-2);
+        assertEq(40.0,manual.correct(40),"Manual factor and offset");
+        assertEq(0.0,manual.correct(0),"Manual offset never raises zero");
+        boolean rejected=false;
+        try{VehicleDisplayFormat.SpeedCalibration.manual(3,0);}
+        catch(IllegalArgumentException error){rejected=true;}
+        assertTrue(rejected,"Reject out-of-range manual correction");
+    }
+    private static void testCruiseCorrection(){
+        VehicleDisplayFormat.SpeedCalibration previous=VehicleDisplayFormat.SpeedCalibration.manual(1.1,2);
+        VehicleDisplayFormat.SpeedCalibration next=VehicleDisplayFormat.SpeedCalibration.fromCruise(previous,50,60);
+        assertTrue(Math.abs(next.correct(50)-60)<1e-9,"Cruise reference is reproduced");
+        assertTrue(Math.abs(next.offset-2*60.0/57)<1e-9,"Cruise composes existing offset");
+        assertEq(0.0,next.correct(0),"Cruise correction keeps stationary speed at zero");
+    }
+    private static void testPastCruiseCorrection(){
+        VehicleDisplayFormat.SpeedCalibration current=VehicleDisplayFormat.SpeedCalibration.manual(1.1,2);
+        double original=50;
+        VehicleDisplayFormat.SpeedCalibration updated=
+            VehicleDisplayFormat.SpeedCalibration.fromDisplayed(current,current.correct(original),60);
+        assertTrue(Math.abs(updated.correct(original)-60)<1e-9,"Past readings compose the current profile");
+        assertTrue(Math.abs(VehicleDisplayFormat.SpeedCalibration.fromDisplayed(null,48,50).correct(48)-50)<1e-9,
+            "Past reading without a profile uses identity");
+    }
     public static void main(String[] args){
-        testSpeed();testSpeedCalibration();testAccessibility();testBackgroundBody();
+        testSpeed();testSpeedCalibration();testAccessibility();testBackgroundBody();testManualCorrection();testCruiseCorrection();testPastCruiseCorrection();
         System.out.println("Vehicle contract tests: "+checks+" passed.");
     }
 }

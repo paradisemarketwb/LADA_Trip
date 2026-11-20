@@ -130,6 +130,23 @@ public final class CanJourneyStore extends SQLiteOpenHelper {
         }catch(Exception e){try{root.put("error",e.getClass().getSimpleName());}catch(Exception ignored){}}
         return root;
     }
+    synchronized long activeStart(){
+        try(Cursor cursor=getReadableDatabase().rawQuery(
+            "SELECT start_at FROM can_trips WHERE end_at IS NULL ORDER BY start_at DESC LIMIT 1",null)){
+            return cursor.moveToFirst()?cursor.getLong(0):0;
+        }
+    }
+    synchronized java.util.List<TripStore.TripSpan> tripsInPeriod(long from,long until){
+        java.util.List<TripStore.TripSpan> spans=new java.util.ArrayList<>();
+        try(Cursor cursor=getReadableDatabase().rawQuery(
+            "SELECT start_at,end_at,distance_m FROM can_trips WHERE start_at>=? AND "+
+                "COALESCE(end_at,last_at)<=? ORDER BY start_at",
+            new String[]{Long.toString(from),Long.toString(until)})){
+            while(cursor.moveToNext())spans.add(new TripStore.TripSpan(
+                cursor.getLong(0),cursor.getLong(1),cursor.getDouble(2)));
+        }
+        return spans;
+    }
     public synchronized String summary(){
         StringBuilder b=new StringBuilder();
         SimpleDateFormat date=new SimpleDateFormat("dd.MM HH:mm",Locale.getDefault());

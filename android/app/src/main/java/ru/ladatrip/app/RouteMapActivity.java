@@ -23,12 +23,12 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Private, offline view of recorded GPS fixes. No external basemap requests. */
+/** Recorded tracks on a local coordinate grid. */
 public final class RouteMapActivity extends Activity {
     private final ExecutorService reader=Executors.newSingleThreadExecutor();
     private RouteView map;
     private TextView detail;
-    private Button select;
+    private Button select,externalMap;
     private long selected;
 
     @Override public void onCreate(Bundle state){
@@ -45,6 +45,14 @@ public final class RouteMapActivity extends Activity {
         screen.addView(select,new LinearLayout.LayoutParams(-1,-2));
         screen.addView(map,new LinearLayout.LayoutParams(-1,0,1));
         screen.addView(detail,new LinearLayout.LayoutParams(-1,-2));
+        externalMap=new Button(this);
+        externalMap.setText("Открыть выбранную точку в навигаторе");
+        externalMap.setEnabled(false);
+        externalMap.setOnClickListener(v->{
+            TripStore.RoutePoint point=map.chosen;
+            if(point!=null)GpsSettingsActivity.openMap(this,point.lat,point.lon);
+        });
+        screen.addView(externalMap,new LinearLayout.LayoutParams(-1,-2));
         setContentView(screen);
         select.setOnClickListener(v->choices(true));
         selected=state==null?0:state.getLong("selected");
@@ -90,7 +98,7 @@ public final class RouteMapActivity extends Activity {
                         "%s · %.2f км · остановок: %d\n%s",
                         date(route.start),route.meters/1000,route.stops.size(),
                         route.truncated?"Показаны первые 12 000 точек":
-                        "Офлайн-схема. Коснитесь точки для просмотра времени и скорости."));
+                        "Коснитесь точки для просмотра времени и скорости."));
                 });
             }catch(RuntimeException e){showReadError();}
         });
@@ -113,7 +121,7 @@ public final class RouteMapActivity extends Activity {
         private final float density=getResources().getDisplayMetrics().density;
         private TripStore.Route route=new TripStore.Route();
         private TripStore.Fix last;
-        private double centerLat,centerLon,lonScale=1,fit=1;
+        private double centerLat,centerLon,fit=1;
         private float zoom=1,offsetX,offsetY;
         private TripStore.RoutePoint chosen;
         RouteView(){
@@ -149,7 +157,7 @@ public final class RouteMapActivity extends Activity {
             return true;
         }
         void update(TripStore.Route value,TripStore.Fix fix){
-            route=value;last=fix;chosen=null;zoom=1;offsetX=0;offsetY=0;
+            route=value;last=fix;chosen=null;externalMap.setEnabled(false);zoom=1;offsetX=0;offsetY=0;
             fitRoute();invalidate();
         }
         @Override protected void onSizeChanged(int w,int h,int oldW,int oldH){fitRoute();}
@@ -158,23 +166,27 @@ public final class RouteMapActivity extends Activity {
         }
         private void fitRoute(){
             if(route.points.isEmpty()){
-                centerLat=last==null?0:last.lat;centerLon=last==null?0:last.lon;fit=10000;
+                centerLat=last==null?0:mercator(last.lat);centerLon=last==null?0:last.lon;fit=10000;
                 return;
             }
             TripStore.RoutePoint first=route.points.get(0);
-            double west=0,east=0,south=first.lat,north=first.lat;
+            double west=0,east=0,south=mercator(first.lat),north=south;
             for(TripStore.RoutePoint point:route.points){
                 double longitude=longitudeDelta(point.lon,first.lon);
                 west=Math.min(west,longitude);east=Math.max(east,longitude);
-                south=Math.min(south,point.lat);north=Math.max(north,point.lat);
+                double latitude=mercator(point.lat);
+                south=Math.min(south,latitude);north=Math.max(north,latitude);
             }
             centerLat=(south+north)/2;centerLon=first.lon+(west+east)/2;
-            lonScale=Math.max(.01,Math.cos(Math.toRadians(centerLat)));
-            fit=Math.min(.8*getWidth()/Math.max(.0001,(east-west)*lonScale),
+            fit=Math.min(.8*getWidth()/Math.max(.0001,east-west),
                 .8*getHeight()/Math.max(.0001,north-south));
         }
-        private float x(double lon){return getWidth()/2f+offsetX+(float)(longitudeDelta(lon,centerLon)*lonScale*fit*zoom);}
-        private float y(double lat){return getHeight()/2f+offsetY+(float)((centerLat-lat)*fit*zoom);}
+        private double mercator(double latitude){
+            double bounded=Math.max(-85.05112878,Math.min(85.05112878,latitude));
+            return Math.toDegrees(Math.log(Math.tan(Math.PI/4+Math.toRadians(bounded)/2)));
+        }
+        private float x(double lon){return getWidth()/2f+offsetX+(float)(longitudeDelta(lon,centerLon)*fit*zoom);}
+        private float y(double lat){return getHeight()/2f+offsetY+(float)((centerLat-mercator(lat))*fit*zoom);}
         private void marker(Canvas canvas,double lat,double lon,int color,float radius){
             paint.setStyle(Paint.Style.FILL);paint.setColor(color);
             canvas.drawCircle(x(lon),y(lat),radius*density,paint);
@@ -216,7 +228,7 @@ public final class RouteMapActivity extends Activity {
                 }
             }
             if(winner==null)return;
-            chosen=winner;invalidate();
+            chosen=winner;externalMap.setEnabled(true);invalidate();
             boolean stop=route.stops.contains(winner);
             String speed=stop?"остановка":Double.isFinite(winner.speed)?
                 String.format(Locale.getDefault(),"%.1f км/ч",winner.speed*3.6):"скорость неизвестна";

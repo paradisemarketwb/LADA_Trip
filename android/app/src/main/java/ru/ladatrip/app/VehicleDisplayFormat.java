@@ -129,6 +129,25 @@ public final class VehicleDisplayFormat {
             if(!Double.isFinite(speed)||speed<0)return Double.NaN;
             return speed==0?0:Math.max(0,speed*factor+offset);
         }
+        static SpeedCalibration manual(double factor,double offset){
+            if(factor<0.5||factor>2||Math.abs(offset)>30)
+                throw new IllegalArgumentException("Manual correction outside range");
+            return new SpeedCalibration(factor,offset);
+        }
+        static SpeedCalibration fromCruise(SpeedCalibration current,double system,double reference){
+            if(!Double.isFinite(system)||system<10||system>240)
+                throw new IllegalArgumentException("Cruise speed outside range");
+            SpeedCalibration base=current==null?manual(1,0):current;
+            return fromDisplayed(base,base.correct(system),reference);
+        }
+        static SpeedCalibration fromDisplayed(SpeedCalibration current,double shown,double reference){
+            if(!Double.isFinite(shown)||shown<1||shown>240||
+                !Double.isFinite(reference)||reference<10||reference>240)
+                throw new IllegalArgumentException("Cruise speed outside range");
+            SpeedCalibration base=current==null?manual(1,0):current;
+            double ratio=reference/shown;
+            return manual(base.factor*ratio,base.offset*ratio);
+        }
         /** Least-squares fit for control points expressed in km/h. */
         public static SpeedCalibration fit(double[] measured,double[] reference){
             if(measured.length!=reference.length||measured.length<2)

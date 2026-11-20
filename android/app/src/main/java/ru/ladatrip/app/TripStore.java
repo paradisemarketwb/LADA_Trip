@@ -148,13 +148,15 @@ public final class TripStore extends SQLiteOpenHelper {
             this.start=start;this.end=end;this.meters=meters;
         }
     }
-    synchronized TripSpan latestLongTrip(long from,long until){
+    synchronized java.util.List<TripSpan> tripsInPeriod(long from,long until){
+        java.util.List<TripSpan> spans=new java.util.ArrayList<>();
         try(Cursor c=getReadableDatabase().rawQuery(
-            "SELECT start_at,end_at,distance_m FROM trips WHERE start_at>=? AND end_at<=? "+
-            "AND distance_m>=20000 ORDER BY end_at DESC LIMIT 1",
-            new String[]{Long.toString(from),Long.toString(until)})){
-            return c.moveToFirst()?new TripSpan(c.getLong(0),c.getLong(1),c.getDouble(2)):null;
+            "SELECT start_at,end_at,distance_m FROM trips WHERE start_at>=? AND "+
+            "COALESCE(end_at,(SELECT MAX(t) FROM points WHERE trip_id=trips.id))<=? "+
+            "ORDER BY start_at",new String[]{Long.toString(from),Long.toString(until)})){
+            while(c.moveToNext())spans.add(new TripSpan(c.getLong(0),c.getLong(1),c.getDouble(2)));
         }
+        return spans;
     }
     static final class RoutePoint {
         final long time;

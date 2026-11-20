@@ -169,12 +169,16 @@ public final class VehicleLiveService extends Service {
             if(!connected||propertyManager==null){
                 if(++connectionFailures%10==1)
                     VehicleLog.state(this,connected?"CarPropertyManager недоступен":"Ожидаем подключение CarService");
-                if(!connected && System.currentTimeMillis()-lastReconnectAttempt>30000){
+                if(System.currentTimeMillis()-lastReconnectAttempt>30000){
                     lastReconnectAttempt=System.currentTimeMillis();
-                    if(car!=null)try{car.getClass().getMethod("disconnect").invoke(car);}
-                        catch(Throwable ignored){}
-                    car=null;
-                    new Handler(Looper.getMainLooper()).post(this::connect);
+                    if(connected)prepareManagers();
+                    else new Handler(Looper.getMainLooper()).post(()->{
+                        if(!VehicleLog.running(this)||connected)return;
+                        if(car!=null)try{car.getClass().getMethod("disconnect").invoke(car);}
+                            catch(Exception ignored){}
+                        car=null;
+                        connect();
+                    });
                 }
             }else{connectionFailures=0;pollProperties();}
             if(sensorManager!=null)pollSensors();

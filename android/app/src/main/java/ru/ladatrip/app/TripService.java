@@ -20,6 +20,7 @@ import android.os.Looper;
 
 public final class TripService extends Service implements LocationListener {
     public static final String ACTION_STOP="ru.ladatrip.app.STOP";
+    static final String ACTION_RECONNECT="ru.ladatrip.app.GPS_RECONNECT";
     private static final String CHANNEL="lada_trip_monitor";
     private static final String EVENTS="lada_trip_events";
     private static final int MONITOR_ID=175;
@@ -64,6 +65,13 @@ public final class TripService extends Service implements LocationListener {
             recorder.stop();Settings.monitor(this,false);stopForeground(true);stopSelf();return START_NOT_STICKY;
         }
         if(!Settings.monitor(this)) {stopSelf();return START_NOT_STICKY;}
+        if(intent!=null&&ACTION_RECONNECT.equals(intent.getAction())&&location!=null){
+            if(gpsSubscribed)location.removeUpdates(this);
+            if(gnssRegistered)location.unregisterGnssStatusCallback(gnssCallback);
+            gpsSubscribed=false;
+            gnssRegistered=false;
+            GpsHealth.start(this);
+        }
         subscribeGps();
         return START_STICKY;
     }
@@ -75,7 +83,8 @@ public final class TripService extends Service implements LocationListener {
         location=(LocationManager)getSystemService(LOCATION_SERVICE);
         if(location==null){GpsHealth.registration(this,"LocationManager недоступен");return;}
         try{
-            location.requestLocationUpdates(LocationManager.GPS_PROVIDER,5000L,3f,this,Looper.getMainLooper());
+            long interval=GpsSettingsActivity.preferences(this).getBoolean("frequent",false)?2000:5000;
+            location.requestLocationUpdates(LocationManager.GPS_PROVIDER,interval,0f,this,Looper.getMainLooper());
             gpsSubscribed=true;
             updateGpsRegistration();
             subscribeGnss();
@@ -107,8 +116,12 @@ public final class TripService extends Service implements LocationListener {
         GpsHealth.raw(this,fix);
         if(fix==null){GpsHealth.rejected(this,"Нет объекта Location");return;}
         if(!fix.hasAccuracy()){GpsHealth.rejected(this,"Нет информации о точности GPS");return;}
-        if(!Float.isFinite(fix.getAccuracy())||fix.getAccuracy()<0||fix.getAccuracy()>80){
-            GpsHealth.rejected(this,"Точность хуже 80 м: "+Math.round(fix.getAccuracy())+" м");return;
+        int accuracyLimit=GpsSettingsActivity.preferences(this).getBoolean("strict",false)?30:80;
+        if(!Float.isFinite(fix.getAccuracy())||fix.getAccuracy()<0||fix.getAccuracy()>accuracyLimit){
+            GpsHealth.rejected(this,"Неподходящая точность GPS (порог "+accuracyLimit+" м)");return;
+        }
+        if(fix.isFromMockProvider()){
+            GpsHealth.rejected(this,"Точка от тестового провайдера");return;
         }
         long ageNanos=android.os.SystemClock.elapsedRealtimeNanos()-fix.getElapsedRealtimeNanos();
         if(fix.getElapsedRealtimeNanos()<=0||ageNanos<0||ageNanos>15_000_000_000L){
@@ -129,7 +142,7 @@ public final class TripService extends Service implements LocationListener {
     @Override public void onStatusChanged(String provider,int status,Bundle extras){}
     private void updateGpsRegistration(){
         GpsHealth.registration(this,location.isProviderEnabled(LocationManager.GPS_PROVIDER)
-            ?"GPS_PROVIDER: подписка зарегистрирована (5 с / 3 м)"
+            ?"GPS_PROVIDER: подписка зарегистрирована"
             :"GPS_PROVIDER выключен · ожидание включения");
     }
     @Override public void onProviderEnabled(String p){

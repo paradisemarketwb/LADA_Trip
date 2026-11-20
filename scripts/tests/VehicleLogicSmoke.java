@@ -117,8 +117,17 @@ public final class VehicleLogicSmoke {
         assertTrue(Math.abs(next.offset-2*60.0/57)<1e-9,"Cruise composes existing offset");
         assertEq(0.0,next.correct(0),"Cruise correction keeps stationary speed at zero");
     }
+    private static void testPastCruiseCorrection(){
+        VehicleDisplayFormat.SpeedCalibration current=VehicleDisplayFormat.SpeedCalibration.manual(1.1,2);
+        double original=50;
+        VehicleDisplayFormat.SpeedCalibration updated=
+            VehicleDisplayFormat.SpeedCalibration.fromDisplayed(current,current.correct(original),60);
+        assertTrue(Math.abs(updated.correct(original)-60)<1e-9,"Past readings compose the current profile");
+        assertTrue(Math.abs(VehicleDisplayFormat.SpeedCalibration.fromDisplayed(null,48,50).correct(48)-50)<1e-9,
+            "Past reading without a profile uses identity");
+    }
     public static void main(String[] args){
-        testSpeed();testSpeedCalibration();testAccessibility();testBackgroundBody();testManualCorrection();testCruiseCorrection();
+        testSpeed();testSpeedCalibration();testAccessibility();testBackgroundBody();testManualCorrection();testCruiseCorrection();testPastCruiseCorrection();
         System.out.println("Vehicle contract tests: "+checks+" passed.");
     }
 }

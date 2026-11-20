@@ -135,12 +135,16 @@ public final class VehicleDisplayFormat {
             return new SpeedCalibration(factor,offset);
         }
         static SpeedCalibration fromCruise(SpeedCalibration current,double system,double reference){
-            if(!Double.isFinite(system)||system<10||system>240||
+            if(!Double.isFinite(system)||system<10||system>240)
+                throw new IllegalArgumentException("Cruise speed outside range");
+            SpeedCalibration base=current==null?manual(1,0):current;
+            return fromDisplayed(base,base.correct(system),reference);
+        }
+        static SpeedCalibration fromDisplayed(SpeedCalibration current,double shown,double reference){
+            if(!Double.isFinite(shown)||shown<1||shown>240||
                 !Double.isFinite(reference)||reference<10||reference>240)
                 throw new IllegalArgumentException("Cruise speed outside range");
             SpeedCalibration base=current==null?manual(1,0):current;
-            double shown=base.correct(system);
-            if(shown<1)throw new IllegalArgumentException("Invalid displayed speed");
             double ratio=reference/shown;
             return manual(base.factor*ratio,base.offset*ratio);
         }

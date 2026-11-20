@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ru">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+html,body,#map{height:100%;margin:0}
+body{font:15px system-ui,sans-serif;color:#18304b;background:#edf3fa}
+#status{position:absolute;z-index:2;left:12px;right:12px;top:12px;padding:12px;background:#fff;border-radius:10px;box-shadow:0 1px 8px #18304b24}
+</style>
+<div id="map" aria-label="Карта поездки"></div>
+<div id="status" role="status">Загрузка карты…</div>
+<script>
+"use strict";
+const trip = __LADA_MAP_DATA__;
+const status = document.getElementById("status");
+const points = trip.segments.flat();
+const center = points[Math.floor(points.length / 2)] || trip.last || [37.6176, 55.7558];
+const message = text => { status.textContent = text; status.hidden = false; };
+const ready = () => { status.hidden = true; };
+function loadSdk(url, callback) {
+    const script = document.createElement("script");
+    script.src = url;
+    if (callback) script.onload = callback;
+    script.onerror = () => message("Картографический сервис недоступен. Проверьте интернет.");
+    document.head.appendChild(script);
+}
+function bounds() {
+    const min = points[0].slice(), max = points[0].slice();
+    for (const [lon, lat] of points) {
+        min[0] = Math.min(min[0], lon); min[1] = Math.min(min[1], lat);
+        max[0] = Math.max(max[0], lon); max[1] = Math.max(max[1], lat);
+    }
+    return {southWest:min, northEast:max};
+}
+function twoGis() {
+    try {
+        const map = new window.mapgl.Map("map", {key:trip.key, center:center, zoom:14});
+        for (const coordinates of trip.segments) if (coordinates.length > 1) {
+            new window.mapgl.Polyline(map, {coordinates:coordinates, color:"#2367d3", width:5});
+        }
+        for (const coordinates of trip.markers) new window.mapgl.Marker(map, {coordinates:coordinates});
+        if (points.length > 1) map.fitBounds(bounds(), {padding:{top:35,bottom:35,left:35,right:35}});
+        map.once("idle", ready);
+    } catch (_) { message("2ГИС не запустился. Проверьте ключ и поддержку WebGL."); }
+}
+const latLng = ([lng, lat]) => ({lat:lat,lng:lng});
+window.gm_authFailure = () => message("Google Maps отклонил ключ. Проверьте доступ к Maps JavaScript API.");
+window.ladaGoogleMap = () => {
+    try {
+        const api = window.google.maps;
+        const map = new api.Map(document.getElementById("map"), {
+            center:latLng(center), zoom:14, mapTypeControl:false, streetViewControl:false
+        });
+        for (const segment of trip.segments) if (segment.length > 1) {
+            new api.Polyline({map:map, path:segment.map(latLng), strokeColor:"#2367d3", strokeWeight:5});
+        }
+        for (const coordinate of trip.markers) new api.Marker({map:map, position:latLng(coordinate)});
+        if (points.length > 1) {
+            const edges = bounds();
+            const viewport = new api.LatLngBounds(latLng(edges.southWest), latLng(edges.northEast));
+            map.fitBounds(viewport, 35);
+        }
+        api.event.addListenerOnce(map, "tilesloaded", ready);
+    } catch (_) { message("Google Maps не запустился. Проверьте ключ и интернет."); }
+};
+setTimeout(() => {
+    if (!status.hidden && status.textContent === "Загрузка карты…")
+        message("Карта не загрузилась. Проверьте сеть и ключ или откройте локальную схему.");
+}, 15000);
+if (trip.provider === "2gis") loadSdk("https://mapgl.2gis.com/api/js", twoGis);
+else loadSdk("https://maps.googleapis.com/maps/api/js?key=" + encodeURIComponent(trip.key)
+    + "&loading=async&callback=ladaGoogleMap");
+</script>
+</html>

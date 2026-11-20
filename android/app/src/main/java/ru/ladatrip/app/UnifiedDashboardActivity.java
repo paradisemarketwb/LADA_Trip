@@ -183,10 +183,12 @@ public final class UnifiedDashboardActivity extends Activity {
         Button calibrate=button("Тарировка скорости",false);
         tools.addView(calibrate,spaced(11,0));
         calibrate.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("Тарировка скорости")
-            .setItems(new String[]{"По скорости круиз-контроля","Ручные параметры и контрольные точки"},(dialog,index)->{
+            .setItems(new String[]{"По скорости круиз-контроля","Ввести прошлый замер","Ручные параметры и контрольные точки"},(dialog,index)->{
                 if(index==0)captureCruiseSpeed();
                 else new AlertDialog.Builder(this).setTitle("Источник скорости")
-                    .setItems(SPEED_SOURCE_LABELS,(d,source)->editSpeedCalibration(source)).show();
+                    .setItems(SPEED_SOURCE_LABELS,(d,source)->{
+                        if(index==1)enterPastCruiseSpeed(source);else editSpeedCalibration(source);
+                    }).show();
             }).show());
         boot=new android.widget.CheckBox(this);
         boot.setText("Запускать запись CAN и GPS после загрузки");
@@ -351,14 +353,45 @@ public final class UnifiedDashboardActivity extends Activity {
                 double value=Double.parseDouble(reference.getText().toString().trim().replace(',','.'));
                 VehicleDisplayFormat.SpeedCalibration updated=
                     VehicleDisplayFormat.SpeedCalibration.fromCruise(current,measured,value);
-                calibrationPreferences().edit()
-                    .putString(reading.source+"/factor",Double.toString(updated.factor))
-                    .putString(reading.source+"/offset",Double.toString(updated.offset))
-                    .putBoolean(reading.source+"/enabled",true).apply();
-                loadSpeedCalibrations();refresh();editor.dismiss();
+                saveSpeedCorrection(reading.source,updated);
+                editor.dismiss();
             }catch(IllegalArgumentException invalid){reference.setError("Проверьте эталон и текущую поправку");}
         }));
         editor.show();
+    }
+    private void enterPastCruiseSpeed(int index){
+        String source=SPEED_SOURCES[index];
+        VehicleDisplayFormat.SpeedCalibration current=speedCalibrations.get(source);
+        LinearLayout content=column();content.setPadding(dp(20),dp(8),dp(20),0);
+        content.addView(txt("Введите показание спидометра приложения и скорость на круиз-контроле. Используйте тот же источник и профиль поправки, что были во время замера.",14,FG,false));
+        EditText shown=cruiseInput("Приложение показывало, км/ч");
+        EditText reference=cruiseInput("Скорость круиз-контроля, км/ч");
+        content.addView(shown);content.addView(reference);
+        AlertDialog editor=new AlertDialog.Builder(this).setTitle(SPEED_SOURCE_LABELS[index])
+            .setView(content).setNegativeButton("Отмена",null).setPositiveButton("Применить",null).create();
+        editor.setOnShowListener(d->editor.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            try{
+                double display=Double.parseDouble(shown.getText().toString().trim().replace(',','.'));
+                double target=Double.parseDouble(reference.getText().toString().trim().replace(',','.'));
+                saveSpeedCorrection(source,VehicleDisplayFormat.SpeedCalibration.fromDisplayed(current,display,target));
+                editor.dismiss();
+            }catch(IllegalArgumentException invalid){reference.setError("Проверьте оба значения скорости");}
+        }));
+        editor.show();
+    }
+
+    private EditText cruiseInput(String hint){
+        EditText input=new EditText(this);input.setSingleLine();
+        input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        input.setHint(hint);return input;
+    }
+
+    private void saveSpeedCorrection(String source,VehicleDisplayFormat.SpeedCalibration correction){
+        calibrationPreferences().edit()
+            .putString(source+"/factor",Double.toString(correction.factor))
+            .putString(source+"/offset",Double.toString(correction.offset))
+            .putBoolean(source+"/enabled",true).apply();
+        loadSpeedCalibrations();refresh();
     }
     private boolean showLast(String key){return VehicleDisplayFormat.engineerOnly(key);}
     private void refresh(){

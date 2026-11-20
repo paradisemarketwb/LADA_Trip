@@ -34,6 +34,10 @@ import java.util.concurrent.Executors;
 
 public final class YandexTripMapActivity extends Activity {
     private static boolean initialized;
+    private static final String[] PROVIDERS={"yandex","2gis","google"};
+    private static final String[] PROVIDER_NAMES={"Яндекс Карты","2ГИС","Google Maps"};
+    private int provider;
+    private TripMapWebView web;
     private final ExecutorService reader=Executors.newSingleThreadExecutor();
     private LinearLayout screen;
     private TextView status,downloadStatus;
@@ -67,9 +71,11 @@ public final class YandexTripMapActivity extends Activity {
         int padding=Math.round(12*getResources().getDisplayMetrics().density);
         screen.setPadding(padding,padding,padding,padding);
         setContentView(screen);
+        provider=Math.max(0,Math.min(PROVIDERS.length-1,getPreferences(MODE_PRIVATE).getInt("provider",0)));
+        button("Карта: "+PROVIDER_NAMES[provider],this::chooseProvider);
         button("Выбрать поездку",()->selectTrip(true));
-        String key=getPreferences(MODE_PRIVATE).getString("mapkit_key","");
-        if(!key.isEmpty()){
+        String key=getPreferences(MODE_PRIVATE).getString(keyName(),"");
+        if(provider==0&&!key.isEmpty()){
             try{
                 if(!initialized){
                     MapKitFactory.setApiKey(key);
@@ -80,18 +86,24 @@ public final class YandexTripMapActivity extends Activity {
                 offline=MapKitFactory.getInstance().getOfflineCacheManager();
             }catch(RuntimeException|LinkageError failure){map=null;offline=null;}
         }
-        if(map==null){
-            TextView empty=new TextView(this);
-            empty.setGravity(Gravity.CENTER);
-            empty.setText(key.isEmpty()?"Введите ключ Яндекс MapKit для карты и загрузки городов.":
-                "Яндекс MapKit не запустился. Доступна локальная схема.");
-            screen.addView(empty,new LinearLayout.LayoutParams(-1,0,1));
-            button("Введите ключ Яндекс MapKit",this::editKey);
-        }else{
+        if(provider!=0&&!key.isEmpty()){
+            try{web=new TripMapWebView(this,PROVIDERS[provider],key);}
+            catch(RuntimeException|LinkageError ignored){}
+        }
+        if(map!=null){
             screen.addView(map,new LinearLayout.LayoutParams(-1,0,1));
             download=button("Скачать офлайн-карту города",this::selectRegion);
             download.setEnabled(offline!=null);
+        }else if(web!=null){
+            screen.addView(web,new LinearLayout.LayoutParams(-1,0,1));
+        }else{
+            TextView empty=new TextView(this);
+            empty.setGravity(Gravity.CENTER);
+            empty.setText(key.isEmpty()?"Введите ключ для "+PROVIDER_NAMES[provider]:
+                "Картографический компонент не запустился. Доступна локальная схема.");
+            screen.addView(empty,new LinearLayout.LayoutParams(-1,0,1));
         }
+        if(provider!=0||!initialized)button("Ключ карты и условия подключения",this::editKey);
         status=new TextView(this);screen.addView(status);
         downloadStatus=new TextView(this);screen.addView(downloadStatus);
         navigator=button("Построить маршрут в Яндекс Навигаторе",this::launchRoute);
@@ -100,16 +112,31 @@ public final class YandexTripMapActivity extends Activity {
         if(selected==0)selectTrip(false);else loadRoute(selected);
     }
 
+    private String keyName(){return provider==0?"mapkit_key":"map_key_"+PROVIDERS[provider];}
+
+    private void chooseProvider(){
+        new AlertDialog.Builder(this).setTitle("Встроенная карта")
+            .setSingleChoiceItems(PROVIDER_NAMES,provider,(dialog,index)->{
+                if(index!=provider){
+                    getPreferences(MODE_PRIVATE).edit().putInt("provider",index).apply();
+                    dialog.dismiss();recreate();
+                }else dialog.dismiss();
+            }).setNegativeButton("Отмена",null).show();
+    }
+
     private void editKey(){
         EditText input=new EditText(this);
         input.setSingleLine(true);
         input.setInputType(android.text.InputType.TYPE_CLASS_TEXT|android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        new AlertDialog.Builder(this).setTitle("Ключ Яндекс MapKit").setView(input)
+        new AlertDialog.Builder(this).setTitle("Ключ: "+PROVIDER_NAMES[provider])
+            .setMessage(provider==0?"Для загрузки городов нужен доступ к офлайн-картам Яндекса.":
+                "Карта использует интернет и отправляет провайдеру запросы для области поездки.")
+            .setView(input)
             .setNegativeButton("Отмена",null)
             .setPositiveButton("Сохранить",(dialog,message)->{
                 String key=input.getText().toString().trim();
                 if(key.isEmpty())return;
-                getPreferences(MODE_PRIVATE).edit().putString("mapkit_key",key).apply();
+                getPreferences(MODE_PRIVATE).edit().putString(keyName(),key).apply();
                 recreate();
             }).show();
     }
@@ -121,6 +148,7 @@ public final class YandexTripMapActivity extends Activity {
 
     @Override protected void onStart(){
         super.onStart();
+        if(web!=null)web.onResume();
         if(map==null)return;
         MapKitFactory.getInstance().onStart();
         map.onStart();
@@ -132,6 +160,7 @@ public final class YandexTripMapActivity extends Activity {
     }
 
     @Override protected void onStop(){
+        if(web!=null)web.onPause();
         if(started){
             if(offline!=null){
                 offline.removeRegionListener(regionListener);
@@ -147,16 +176,25 @@ public final class YandexTripMapActivity extends Activity {
     @Override protected void onSaveInstanceState(Bundle saved){
         super.onSaveInstanceState(saved);saved.putLong("selected",selected);
     }
-    @Override protected void onDestroy(){reader.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){
+        reader.shutdownNow();
+        if(web!=null){web.stopLoading();screen.removeView(web);web.destroy();}
+        super.onDestroy();
+    }
 
     private void selectTrip(boolean showPicker){
         reader.execute(()->{
             try(TripStore store=new TripStore(this)){
                 Map<Long,String> rows=store.routeChoices();
+                TripStore.Fix last=store.lastFix();
                 runOnUiThread(()->{
                     if(isDestroyed()||isFinishing())return;
                     List<Long> ids=new ArrayList<>(rows.keySet());
-                    if(ids.isEmpty()){status.setText("Записанных GPS-поездок нет");return;}
+                    if(ids.isEmpty()){
+                        status.setText("Записанных GPS-поездок нет");
+                        if(web!=null)web.showRoute(null,last);
+                        return;
+                    }
                     if(showPicker)new AlertDialog.Builder(this).setTitle("GPS-поездки")
                         .setItems(rows.values().toArray(new String[0]),(dialog,index)->loadRoute(ids.get(index))).show();
                     else if(selected==0)loadRoute(ids.get(0));
@@ -171,6 +209,7 @@ public final class YandexTripMapActivity extends Activity {
         reader.execute(()->{
             try(TripStore store=new TripStore(this)){
                 TripStore.Route result=store.route(id);
+                TripStore.Fix last=store.lastFix();
                 runOnUiThread(()->{
                     if(isDestroyed()||selected!=id)return;
                     route=result;
@@ -178,6 +217,7 @@ public final class YandexTripMapActivity extends Activity {
                         route.meters/1000,route.stops.size()));
                     navigator.setEnabled(route.points.size()>1&&!route.truncated);
                     if(map!=null)drawRoute();
+                    if(web!=null)web.showRoute(result,last);
                 });
             }catch(RuntimeException failure){showTripError();}
         });

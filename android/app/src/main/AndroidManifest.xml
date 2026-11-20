@@ -46,6 +46,7 @@
         <activity android:name=".SourceDiagnosticsActivity" android:exported="false" />
         <activity android:name=".FuelActivity" android:exported="false" />
         <activity android:name=".GpsSettingsActivity" android:exported="false" />
+        <activity android:name=".YandexTripMapActivity" android:exported="false" />
         <activity android:name=".RouteMapActivity" android:exported="false" />
         <service android:name=".DeliveryJob" android:enabled="false" android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" />
         <receiver android:name=".BootReceiver" android:exported="false">

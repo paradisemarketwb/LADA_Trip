@@ -175,7 +175,7 @@ public final class UnifiedDashboardActivity extends Activity {
 
         Button map=button("Карта поездок",true);
         trips.addView(map,spaced(8,0));
-        map.setOnClickListener(v->startActivity(new Intent(this,RouteMapActivity.class)));
+        map.setOnClickListener(v->startActivity(new Intent(this,YandexTripMapActivity.class)));
 
         LinearLayout tools=card(root);
         heading(tools,"ОДИН ЭКСПОРТ · ПОЛНАЯ ДИАГНОСТИКА",

@@ -12,12 +12,10 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -65,17 +63,6 @@ public final class GpsSettingsActivity extends Activity {
                 startForegroundService(new Intent(this,TripService.class).setAction(TripService.ACTION_RECONNECT));
         });
         page.addView(frequent);
-        TextView mapLabel=new TextView(this);mapLabel.setText("Открывать точку в");page.addView(mapLabel);
-        Spinner maps=new Spinner(this);
-        ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_spinner_item,
-            new String[]{"Яндекс Навигатор","2ГИС"});
-        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
-        maps.setAdapter(adapter);
-        maps.setSelection(preferences(this).getInt("map",0)==1?1:0);page.addView(maps);
-        button(page,"Сохранить выбор карты",()->{
-            preferences(this).edit().putInt("map",maps.getSelectedItemPosition()).apply();
-            message("Карта выбрана");
-        });
         button(page,"Открыть последнюю GPS-точку",()->{
             try(TripStore store=new TripStore(this)){
                 TripStore.Fix last=store.lastFix();
@@ -83,7 +70,7 @@ public final class GpsSettingsActivity extends Activity {
                 openMap(this,last.lat,last.lon);
             }
         });
-        button(page,"Офлайн-карта поездок",()->startActivity(new Intent(this,RouteMapActivity.class)));
+        button(page,"Карта поездок",()->startActivity(new Intent(this,YandexTripMapActivity.class)));
     }
 
     private void restartGps(){
@@ -99,21 +86,23 @@ public final class GpsSettingsActivity extends Activity {
         if(code==1&&grants.length>0&&grants[0]==PackageManager.PERMISSION_GRANTED)restartGps();
     }
     static void openMap(Context context,double lat,double lon){
-        boolean gis=preferences(context).getInt("map",0)==1;
-        Uri uri=Uri.parse(gis?"geo:"+lat+","+lon:"yandexnavi://show_point_on_map?lat="+lat+"&lon="+lon);
-        Intent view=new Intent(Intent.ACTION_VIEW,uri);
-        if(gis)view.setPackage("ru.dublgis.dgismobile");
-        try{
-            context.startActivity(view);
-        }catch(ActivityNotFoundException e){
-            if(!gis){
-                try{
-                    context.startActivity(new Intent(Intent.ACTION_VIEW,uri).setPackage("ru.yandex.yandexnavi.auto"));
-                    return;
-                }catch(ActivityNotFoundException ignored){}
-            }
-            Toast.makeText(context,"Приложение карты недоступно. Используйте офлайн-схему.",Toast.LENGTH_LONG).show();
+        launchNavigator(context,"yandexnavi://show_point_on_map?lat="+lat+"&lon="+lon);
+    }
+
+    static void openRoute(Context context,TripStore.RoutePoint from,TripStore.RoutePoint to){
+        launchNavigator(context,"yandexnavi://build_route_on_map?lat_from="+from.lat+
+            "&lon_from="+from.lon+"&lat_to="+to.lat+"&lon_to="+to.lon);
+    }
+
+    private static void launchNavigator(Context context,String link){
+        Uri uri=Uri.parse(link);
+        for(String app:new String[]{"ru.yandex.yandexnavi","ru.yandex.yandexnavi.auto"}){
+            try{
+                context.startActivity(new Intent(Intent.ACTION_VIEW,uri).setPackage(app));
+                return;
+            }catch(ActivityNotFoundException ignored){}
         }
+        Toast.makeText(context,"Яндекс Навигатор не найден или не поддерживает эту ссылку.",Toast.LENGTH_LONG).show();
     }
     private void button(LinearLayout parent,String label,Runnable action){
         Button view=new Button(this);view.setText(label);view.setAllCaps(false);

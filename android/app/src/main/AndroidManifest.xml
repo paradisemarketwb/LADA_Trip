@@ -26,6 +26,7 @@
         android:label="LADA Trip" android:theme="@style/TripTheme" android:icon="@drawable/ic_trip">
         <uses-library android:name="android.car" android:required="false" />
         <activity android:name=".EngineeringActivity" android:exported="false" android:screenOrientation="portrait" />
+        <activity android:name=".ElmPairingActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".VehicleDashboardActivity" android:exported="false" android:screenOrientation="portrait" />
         <activity android:name=".UnifiedDashboardActivity" android:exported="true" android:screenOrientation="portrait">
             <intent-filter>

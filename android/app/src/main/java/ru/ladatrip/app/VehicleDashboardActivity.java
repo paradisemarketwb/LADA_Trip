@@ -2,10 +2,7 @@ package ru.ladatrip.app;
 
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothDevice;
 import org.json.JSONObject;
-import java.util.Set;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.PermissionInfo;
@@ -134,7 +131,7 @@ public final class VehicleDashboardActivity extends Activity {
         });
         extra.addView(text("РЕЗЕРВ · BLUETOOTH ELM327 (НЕОБЯЗАТЕЛЬНО)",12,BLUE,true));
         extra.addView(text("Если штатная R2 блокирует RPM и ОЖ, можно использовать уже имеющийся ELM327: стандартные PID 010C и 0105. Для остальных данных адаптер не нужен. Не подключаемся автоматически.",12,GREY,false));
-        Button elmStart=button("Выбрать сопряжённый ELM327",false);
+        Button elmStart=button("Найти и подключить ELM327",false);
         extra.addView(elmStart,margin(7,3));
         elmStart.setOnClickListener(v->chooseElm());
         Button elmStop=button("Отключить ELM327",false);
@@ -309,31 +306,7 @@ public final class VehicleDashboardActivity extends Activity {
         },"LadaTripEngineAudit").start();
     }
     private void chooseElm(){
-        BluetoothAdapter adapter=BluetoothAdapter.getDefaultAdapter();
-        if(adapter==null){toast("Bluetooth недоступен в магнитоле");return;}
-        if(!adapter.isEnabled()){toast("Включи Bluetooth в системных настройках");return;}
-        Set<BluetoothDevice> paired;
-        try{paired=adapter.getBondedDevices();}
-        catch(SecurityException e){toast("Доступ к Bluetooth запрещён системой");return;}
-        if(paired==null||paired.isEmpty()){
-            toast("Сначала сопряги ELM327 в настройках Android магнитолы");
-            return;
-        }
-        final java.util.List<BluetoothDevice> choices=new java.util.ArrayList<>(paired);
-        String[] names=new String[choices.size()];
-        for(int i=0;i<choices.size();i++){
-            BluetoothDevice b=choices.get(i);
-            String name=b.getName();
-            names[i]=(name==null?"Неизвестное BT устройство":name)+"  ["+b.getAddress()+"]";
-        }
-        new AlertDialog.Builder(this).setTitle("Выбери ELM327 (Bluetooth SPP)")
-            .setItems(names,(dialog,index)->{
-                BluetoothDevice device=choices.get(index);
-                Intent i=new Intent(this,EngineElmService.class);
-                i.putExtra(EngineElmService.EXTRA_ADDRESS,device.getAddress());
-                try{startForegroundService(i);toast("Подключение к ELM327 запрошено");}
-                catch(Exception ex){toast("Не удалось подключиться: "+ex.getClass().getSimpleName());}
-            }).setNegativeButton("Отмена",null).show();
+        startActivity(new Intent(this,ElmPairingActivity.class));
     }
     private void startVehicle(){
         requestAvailablePermissions();

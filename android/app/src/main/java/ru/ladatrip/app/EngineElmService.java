@@ -71,10 +71,10 @@ public final class EngineElmService extends Service {
         try{
             BluetoothAdapter adapter=BluetoothAdapter.getDefaultAdapter();
             if(adapter==null||!adapter.isEnabled())throw new IllegalStateException("Bluetooth выключен или недоступен");
-            // No discovery. User selects an already paired SPP adapter explicitly.
+            // Pairing is handled by the connection screen before starting SPP.
             BluetoothDevice device=adapter.getRemoteDevice(address);
             if(device.getBondState()!=BluetoothDevice.BOND_BONDED)
-                throw new IllegalStateException("Сначала сопрягите ELM327 в настройках Bluetooth");
+                throw new IllegalStateException("Сначала сопрягите ELM327 на экране подключения");
             BluetoothSocket connection=device.createRfcommSocketToServiceRecord(SPP);
             socket=connection;
             connection.connect();

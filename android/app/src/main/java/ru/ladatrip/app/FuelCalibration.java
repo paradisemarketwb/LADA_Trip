@@ -47,4 +47,11 @@ final class FuelCalibration {
         if(!Double.isFinite(result))throw new IllegalArgumentException("Invalid consumption");
         return result;
     }
+    static double cost(double litres,double price){
+        if(!Double.isFinite(litres)||!Double.isFinite(price)||litres<=0||price<=0)
+            throw new IllegalArgumentException("Expected positive fuel and price");
+        double result=litres*price;
+        if(!Double.isFinite(result))throw new IllegalArgumentException("Invalid cost");
+        return result;
+    }
 }

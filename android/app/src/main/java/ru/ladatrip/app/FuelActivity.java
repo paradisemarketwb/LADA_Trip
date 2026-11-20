@@ -59,9 +59,15 @@ public final class FuelActivity extends Activity {
         screen.addView(consumptionTitle);
         consumption=new TextView(this);consumption.setTextSize(18);screen.addView(consumption);
         manualConsumption=new TextView(this);screen.addView(manualConsumption);
-        Button manual=new Button(this);manual.setText("Рассчитать по заправке");
+        LinearLayout fuelActions=new LinearLayout(this);
+        fuelActions.setOrientation(LinearLayout.HORIZONTAL);
+        Button manual=new Button(this);manual.setText("Расчёт по заправке");
         manual.setOnClickListener(v->editFuelEstimate());
-        screen.addView(manual);
+        fuelActions.addView(manual,new LinearLayout.LayoutParams(0,-2,1));
+        Button price=new Button(this);price.setText("Цена за литр");
+        price.setOnClickListener(v->editFuelPrice());
+        fuelActions.addView(price,new LinearLayout.LayoutParams(0,-2,1));
+        screen.addView(fuelActions);
         showManualConsumption();
         plot=new Plot();screen.addView(plot,new LinearLayout.LayoutParams(-1,0,1));
         selection=new TextView(this);screen.addView(selection);
@@ -107,6 +113,7 @@ public final class FuelActivity extends Activity {
         long until=customUntil!=0?customUntil:Long.MAX_VALUE;
         boolean onlyCurrent=activeTrip;
         boolean gpsMileage=Settings.gpsMileage(this);
+        double price=storedPrice("price_per_litre");
         consumption.setText("Считаем по журналу…");
         selection.setText("Коснитесь графика для просмотра сырого и сглаженного показаний.");
         reader.execute(()->{
@@ -156,7 +163,7 @@ public final class FuelActivity extends Activity {
                     samples.add(new Sample(reading.at,raw,litres,level,gap,sorted.length==5));
                 }
                 int up=rises,down=drops;
-                String estimate=estimate(samples,start,until,gpsMileage);
+                String estimate=estimate(samples,start,until,gpsMileage,price);
                 runOnUiThread(()->{
                     if(isDestroyed()||generation!=loadGeneration)return;
                     plot.samples=samples;plot.selected=null;plot.invalidate();
@@ -190,7 +197,7 @@ public final class FuelActivity extends Activity {
             }
         });
     }
-    private String estimate(List<Sample> samples,long from,long until,boolean gpsMileage){
+    private String estimate(List<Sample> samples,long from,long until,boolean gpsMileage,double price){
         List<TripStore.TripSpan> spans;
         if(gpsMileage){
             try(TripStore trips=new TripStore(this)){spans=trips.tripsInPeriod(from,until);}
@@ -211,7 +218,8 @@ public final class FuelActivity extends Activity {
             " · нужна завершённая поездка от 20 км с замерами уровня у начала и конца.";
         return distance+String.format(Locale.getDefault(),
             "\nАвтооценка: %.1f л/100 км · %.1f л за %.1f км (%d поезд.)",
-            FuelCalibration.consumption(covered/1000,litres),litres,covered/1000,count);
+            FuelCalibration.consumption(covered/1000,litres),litres,covered/1000,count)
+            +costSummary(covered/1000,litres,price,"По текущей цене");
     }
     private double estimateTrip(List<Sample> samples,TripStore.TripSpan trip){
         Sample start=null,end=null,previous=null;
@@ -228,6 +236,46 @@ public final class FuelActivity extends Activity {
         double used=start.level-end.level;
         return used>=2&&used*100000/trip.meters<=40?used:Double.NaN;
     }
+    private double storedPrice(String name){
+        String value=settings().getString(name,"");
+        return value.isEmpty()?0:Double.parseDouble(value);
+    }
+
+    private String costSummary(double km,double litres,double price,String note){
+        if(price<=0)return "";
+        return String.format(Locale.getDefault(),"\n%s %.2f ₽/л: %.2f ₽ · %.2f ₽/100 км",
+            note,price,FuelCalibration.cost(litres,price),
+            FuelCalibration.cost(FuelCalibration.consumption(km,litres),price));
+    }
+
+    private void editFuelPrice(){
+        EditText price=new EditText(this);
+        price.setSingleLine(true);
+        price.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|
+            android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        price.setHint("₽ за литр");
+        price.setText(settings().getString("price_per_litre",""));
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Текущая цена топлива")
+            .setMessage("Используется для оценки стоимости по журналу. Сохранённый расчёт по заправке сохраняет свою цену.")
+            .setView(price).setNegativeButton("Отмена",null).setPositiveButton("Сохранить",null).create();
+        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            try{
+                String value=readOptionalPrice(price);
+                settings().edit().putString("price_per_litre",value).apply();
+                dialog.dismiss();load();
+            }catch(IllegalArgumentException invalid){price.setError("Введите положительную цену или оставьте поле пустым");}
+        }));
+        dialog.show();
+    }
+
+    private String readOptionalPrice(EditText input){
+        String value=input.getText().toString().trim().replace(',','.');
+        if(value.isEmpty())return "";
+        double price=Double.parseDouble(value);
+        FuelCalibration.cost(1,price);
+        if(price>100000)throw new IllegalArgumentException("Price outside range");
+        return Double.toString(price);
+    }
     private void showManualConsumption(){
         String km=settings().getString("fill_km",""),litres=settings().getString("fill_litres","");
         if(km.isEmpty()||litres.isEmpty()){
@@ -237,21 +285,24 @@ public final class FuelActivity extends Activity {
         double distance=Double.parseDouble(km),fuel=Double.parseDouble(litres);
         manualConsumption.setText(String.format(Locale.getDefault(),
             "По заправке: %.1f л/100 км · %.1f л за %.1f км",
-            FuelCalibration.consumption(distance,fuel),fuel,distance));
+            FuelCalibration.consumption(distance,fuel),fuel,distance)
+            +costSummary(distance,fuel,storedPrice("fill_price"),"По цене заправки"));
     }
 
     private void editFuelEstimate(){
         LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);
-        EditText km=new EditText(this),litres=new EditText(this);
+        EditText km=new EditText(this),litres=new EditText(this),price=new EditText(this);
         km.setHint("Пробег с прошлой полной заправки, км");
         litres.setHint("Залито до полного бака, л");
-        for(EditText input:new EditText[]{km,litres}){
+        price.setHint("Цена этой заправки, ₽/л (необязательно)");
+        for(EditText input:new EditText[]{km,litres,price}){
             input.setSingleLine(true);
             input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|
                 android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
             form.addView(input);
         }
         km.setText(settings().getString("fill_km",""));litres.setText(settings().getString("fill_litres",""));
+        price.setText(settings().getString("fill_price",settings().getString("price_per_litre","")));
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Расход по заправке")
             .setMessage("Для расчёта между двумя полными заправками укажите пробег и литры, залитые на второй заправке.")
             .setView(form).setNegativeButton("Отмена",null).setPositiveButton("Рассчитать",null).create();
@@ -260,10 +311,11 @@ public final class FuelActivity extends Activity {
                 double distance=Double.parseDouble(km.getText().toString().trim().replace(',','.'));
                 double volume=Double.parseDouble(litres.getText().toString().trim().replace(',','.'));
                 FuelCalibration.consumption(distance,volume);
+                String priceValue=readOptionalPrice(price);
                 settings().edit().putString("fill_km",Double.toString(distance))
-                    .putString("fill_litres",Double.toString(volume)).apply();
+                    .putString("fill_litres",Double.toString(volume)).putString("fill_price",priceValue).apply();
                 showManualConsumption();dialog.dismiss();
-            }catch(IllegalArgumentException invalid){litres.setError("Введите положительные пробег и литры");}
+            }catch(IllegalArgumentException invalid){litres.setError("Проверьте положительные значения пробега, литров и цены");}
         }));
         dialog.show();
     }

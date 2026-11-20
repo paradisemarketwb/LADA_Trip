@@ -33,6 +33,8 @@ public final class FuelLogicSmoke {
     }
     public static void main(String[] args){
         testFuelCalibration();testConsumption();
+        assertEq(360.0,FuelCalibration.cost(6,60),"Cost per 100 km");
+        assertEq(900.0,FuelCalibration.cost(15,60),"Total fill cost");
         System.out.println("Fuel contract tests: "+checks+" passed.");
     }
 }

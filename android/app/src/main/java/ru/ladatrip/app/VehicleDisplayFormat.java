@@ -134,6 +134,16 @@ public final class VehicleDisplayFormat {
                 throw new IllegalArgumentException("Manual correction outside range");
             return new SpeedCalibration(factor,offset);
         }
+        static SpeedCalibration fromCruise(SpeedCalibration current,double system,double reference){
+            if(!Double.isFinite(system)||system<10||system>240||
+                !Double.isFinite(reference)||reference<10||reference>240)
+                throw new IllegalArgumentException("Cruise speed outside range");
+            SpeedCalibration base=current==null?manual(1,0):current;
+            double shown=base.correct(system);
+            if(shown<1)throw new IllegalArgumentException("Invalid displayed speed");
+            double ratio=reference/shown;
+            return manual(base.factor*ratio,base.offset*ratio);
+        }
         /** Least-squares fit for control points expressed in km/h. */
         public static SpeedCalibration fit(double[] measured,double[] reference){
             if(measured.length!=reference.length||measured.length<2)

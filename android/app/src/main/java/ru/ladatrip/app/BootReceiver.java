@@ -5,7 +5,6 @@ import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.location.LocationManager;
 
 /**
  * Restores previously enabled recording after normal Android boot.
@@ -20,8 +19,6 @@ public final class BootReceiver extends BroadcastReceiver {
         catch(Exception e){android.util.Log.w("LadaTrip","Vehicle autoboot unavailable",e);}
         if(context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)!=PackageManager.PERMISSION_GRANTED)
             return;
-        LocationManager lm=(LocationManager)context.getSystemService(Context.LOCATION_SERVICE);
-        if(lm==null || !lm.isProviderEnabled(LocationManager.GPS_PROVIDER))return;
         Settings.monitor(context,true);
         try{context.startForegroundService(new Intent(context,TripService.class));}
         catch(Exception e){android.util.Log.w("LadaTrip","GPS autoboot unavailable",e);}

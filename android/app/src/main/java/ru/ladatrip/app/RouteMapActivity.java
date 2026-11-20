@@ -3,6 +3,8 @@ package ru.ladatrip.app;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.graphics.Canvas;
+import android.graphics.Bitmap;
+import android.graphics.RectF;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
@@ -23,13 +25,15 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Private, offline view of recorded GPS fixes. No external basemap requests. */
+/** Recorded tracks, rendered locally over an optional street basemap. */
 public final class RouteMapActivity extends Activity {
     private final ExecutorService reader=Executors.newSingleThreadExecutor();
     private RouteView map;
     private TextView detail;
     private Button select,externalMap;
     private long selected;
+    private StreetTiles tiles;
+    private boolean streets;
 
     @Override public void onCreate(Bundle state){
         super.onCreate(state);
@@ -42,6 +46,20 @@ public final class RouteMapActivity extends Activity {
         detail.setPadding(padding,padding,padding,padding);
         detail.setText("Загрузка поездок…");
         map=new RouteView();
+        tiles=new StreetTiles(this,map::invalidate);
+        streets=getPreferences(MODE_PRIVATE).getBoolean("streets",false);
+        android.widget.CheckBox basemap=new android.widget.CheckBox(this);
+        basemap.setText("Улицы OpenStreetMap · интернет");
+        basemap.setChecked(streets);
+        basemap.setOnCheckedChangeListener((view,checked)->{
+            if(checked)android.widget.Toast.makeText(this,
+                "Для загрузки улиц OpenStreetMap получает область, видимую на карте.",
+                android.widget.Toast.LENGTH_LONG).show();
+            streets=checked;
+            getPreferences(MODE_PRIVATE).edit().putBoolean("streets",checked).apply();
+            map.invalidate();
+        });
+        screen.addView(basemap);
         screen.addView(select,new LinearLayout.LayoutParams(-1,-2));
         screen.addView(map,new LinearLayout.LayoutParams(-1,0,1));
         screen.addView(detail,new LinearLayout.LayoutParams(-1,-2));
@@ -98,7 +116,7 @@ public final class RouteMapActivity extends Activity {
                         "%s · %.2f км · остановок: %d\n%s",
                         date(route.start),route.meters/1000,route.stops.size(),
                         route.truncated?"Показаны первые 12 000 точек":
-                        "Офлайн-схема. Коснитесь точки для просмотра времени и скорости."));
+                        "Коснитесь точки для просмотра времени и скорости."));
                 });
             }catch(RuntimeException e){showReadError();}
         });
@@ -111,7 +129,7 @@ public final class RouteMapActivity extends Activity {
         return time==0?"—":DateFormat.getDateTimeInstance(DateFormat.SHORT,DateFormat.SHORT)
             .format(new Date(time));
     }
-    @Override protected void onDestroy(){reader.shutdownNow();super.onDestroy();}
+    @Override protected void onDestroy(){reader.shutdownNow();tiles.close();super.onDestroy();}
 
     private final class RouteView extends View {
         private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -121,7 +139,8 @@ public final class RouteMapActivity extends Activity {
         private final float density=getResources().getDisplayMetrics().density;
         private TripStore.Route route=new TripStore.Route();
         private TripStore.Fix last;
-        private double centerLat,centerLon,lonScale=1,fit=1;
+        private double centerLat,centerLon,fit=1;
+        private final RectF tileDestination=new RectF();
         private float zoom=1,offsetX,offsetY;
         private TripStore.RoutePoint chosen;
         RouteView(){
@@ -166,23 +185,64 @@ public final class RouteMapActivity extends Activity {
         }
         private void fitRoute(){
             if(route.points.isEmpty()){
-                centerLat=last==null?0:last.lat;centerLon=last==null?0:last.lon;fit=10000;
+                centerLat=last==null?0:mercator(last.lat);centerLon=last==null?0:last.lon;fit=10000;
                 return;
             }
             TripStore.RoutePoint first=route.points.get(0);
-            double west=0,east=0,south=first.lat,north=first.lat;
+            double west=0,east=0,south=mercator(first.lat),north=south;
             for(TripStore.RoutePoint point:route.points){
                 double longitude=longitudeDelta(point.lon,first.lon);
                 west=Math.min(west,longitude);east=Math.max(east,longitude);
-                south=Math.min(south,point.lat);north=Math.max(north,point.lat);
+                double latitude=mercator(point.lat);
+                south=Math.min(south,latitude);north=Math.max(north,latitude);
             }
             centerLat=(south+north)/2;centerLon=first.lon+(west+east)/2;
-            lonScale=Math.max(.01,Math.cos(Math.toRadians(centerLat)));
-            fit=Math.min(.8*getWidth()/Math.max(.0001,(east-west)*lonScale),
+            fit=Math.min(.8*getWidth()/Math.max(.0001,east-west),
                 .8*getHeight()/Math.max(.0001,north-south));
         }
-        private float x(double lon){return getWidth()/2f+offsetX+(float)(longitudeDelta(lon,centerLon)*lonScale*fit*zoom);}
-        private float y(double lat){return getHeight()/2f+offsetY+(float)((centerLat-lat)*fit*zoom);}
+        private double mercator(double latitude){
+            double bounded=Math.max(-85.05112878,Math.min(85.05112878,latitude));
+            return Math.toDegrees(Math.log(Math.tan(Math.PI/4+Math.toRadians(bounded)/2)));
+        }
+        private float x(double lon){return getWidth()/2f+offsetX+(float)(longitudeDelta(lon,centerLon)*fit*zoom);}
+        private float y(double lat){return getHeight()/2f+offsetY+(float)((centerLat-mercator(lat))*fit*zoom);}
+        private void drawTiles(Canvas canvas){
+            if(!streets||(route.points.isEmpty()&&last==null))return;
+            double scale=fit*zoom*360;
+            if(scale<=0)return;
+            int z=Math.max(0,Math.min(19,(int)Math.floor(Math.log(scale/(128*density))/Math.log(2))));
+            int span=1<<z;
+            double tileSize=scale/span;
+            if(tileSize<12)return;
+            double left=getWidth()/2.0+offsetX-(centerLon+180)*scale/360;
+            double top=getHeight()/2.0+offsetY-(180-centerLat)*scale/360;
+            int minX=(int)Math.floor(-left/tileSize),maxX=(int)Math.floor((getWidth()-left)/tileSize);
+            int minY=Math.max(0,(int)Math.floor(-top/tileSize));
+            int maxY=Math.min(span-1,(int)Math.floor((getHeight()-top)/tileSize));
+            if((maxX-minX+1L)*(maxY-minY+1L)>192)return;
+            paint.setStyle(Paint.Style.FILL);
+            paint.setFilterBitmap(true);
+            for(int y=minY;y<=maxY;y++){
+                for(int x=minX;x<=maxX;x++){
+                    Bitmap bitmap=tiles.tile(z,Math.floorMod(x,span),y);
+                    if(bitmap==null)continue;
+                    tileDestination.set((float)(left+x*tileSize),(float)(top+y*tileSize),
+                        (float)(left+(x+1)*tileSize),(float)(top+(y+1)*tileSize));
+                    canvas.drawBitmap(bitmap,null,tileDestination,paint);
+                }
+            }
+        }
+        private void drawAttribution(Canvas canvas){
+            if(!streets)return;
+            String label="© OpenStreetMap contributors";
+            paint.setStyle(Paint.Style.FILL);
+            paint.setTextSize(11*density);
+            float left=getWidth()-paint.measureText(label)-8*density;
+            paint.setColor(0xeaffffff);
+            canvas.drawRect(left-4*density,getHeight()-20*density,getWidth(),getHeight(),paint);
+            paint.setColor(0xff293a4d);
+            canvas.drawText(label,left,getHeight()-6*density,paint);
+        }
         private void marker(Canvas canvas,double lat,double lon,int color,float radius){
             paint.setStyle(Paint.Style.FILL);paint.setColor(color);
             canvas.drawCircle(x(lon),y(lat),radius*density,paint);
@@ -194,6 +254,7 @@ public final class RouteMapActivity extends Activity {
             for(float x=offsetX%step;x<getWidth();x+=step)canvas.drawLine(x,0,x,getHeight(),paint);
             for(float y=offsetY%step;y<getHeight();y+=step)canvas.drawLine(0,y,getWidth(),y,paint);
 
+            drawTiles(canvas);
             line.reset();
             TripStore.RoutePoint previous=null;
             for(TripStore.RoutePoint point:route.points){
@@ -213,6 +274,7 @@ public final class RouteMapActivity extends Activity {
             for(TripStore.RoutePoint stop:route.stops)marker(canvas,stop.lat,stop.lon,0xffa4530c,5);
             if(last!=null)marker(canvas,last.lat,last.lon,0xff34445d,4);
             if(chosen!=null)marker(canvas,chosen.lat,chosen.lon,Color.BLACK,6);
+            drawAttribution(canvas);
         }
         private void choose(float x,float y){
             float best=24*density;

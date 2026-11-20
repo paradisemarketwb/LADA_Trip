@@ -48,7 +48,7 @@ public final class FuelActivity extends Activity {
         Button filter=new Button(this);filter.setText("Источник и период");screen.addView(filter);
         filter.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("Источник")
             .setItems(LABELS,(dialog,index)->new AlertDialog.Builder(this).setTitle("Период")
-                .setItems(new String[]{"Текущая GPS-поездка","День","Неделя","Месяц","Выбрать даты"},(d,p)->{
+                .setItems(new String[]{"Текущая поездка","День","Неделя","Месяц","Выбрать даты"},(d,p)->{
                     if(p==4){chooseDates(index);return;}
                     source=index;activeTrip=p==0;customFrom=0;customUntil=0;
                     if(p>0)period=DAY*new int[]{1,7,30}[p-1];
@@ -97,17 +97,22 @@ public final class FuelActivity extends Activity {
         long from=customUntil!=0?customFrom:System.currentTimeMillis()-period;
         long until=customUntil!=0?customUntil:Long.MAX_VALUE;
         boolean onlyCurrent=activeTrip;
+        boolean gpsMileage=Settings.gpsMileage(this);
         selection.setText("Коснитесь графика для просмотра сырого и сглаженного показаний.");
         reader.execute(()->{
             try(VehicleLog log=new VehicleLog(this)){
                 long start=from;
                 if(onlyCurrent){
-                    try(TripStore trips=new TripStore(this)){start=trips.startTime(trips.openTrip());}
+                    if(gpsMileage){
+                        try(TripStore trips=new TripStore(this)){start=trips.startTime(trips.openTrip());}
+                    }else{
+                        try(CanJourneyStore trips=new CanJourneyStore(this)){start=trips.activeStart();}
+                    }
                     if(start==0){
                         runOnUiThread(()->{
                             if(isDestroyed()||generation!=loadGeneration)return;
                             plot.samples=new ArrayList<>();plot.invalidate();gauge.setVisibility(View.GONE);
-                            summary.setText("Нет активной записи GPS-поездки.");
+                            summary.setText("Нет активной поездки для выбранного источника пробега.");
                         });
                         return;
                     }
@@ -140,7 +145,7 @@ public final class FuelActivity extends Activity {
                     samples.add(new Sample(reading.at,raw,litres,level,gap,sorted.length==5));
                 }
                 int up=rises,down=drops;
-                String estimate=estimate(samples,start,until);
+                String estimate=estimate(samples,start,until,gpsMileage);
                 runOnUiThread(()->{
                     if(isDestroyed()||generation!=loadGeneration)return;
                     plot.samples=samples;plot.selected=null;plot.invalidate();
@@ -173,18 +178,23 @@ public final class FuelActivity extends Activity {
             }
         });
     }
-    private String estimate(List<Sample> samples,long from,long until){
+    private String estimate(List<Sample> samples,long from,long until,boolean gpsMileage){
+        List<TripStore.TripSpan> spans;
+        if(gpsMileage){
+            try(TripStore trips=new TripStore(this)){spans=trips.tripsInPeriod(from,until);}
+        }else{
+            try(CanJourneyStore trips=new CanJourneyStore(this)){spans=trips.tripsInPeriod(from,until);}
+        }
         double total=0,covered=0,litres=0;
         int count=0;
-        try(TripStore trips=new TripStore(this)){
-            for(TripStore.TripSpan trip:trips.tripsInPeriod(from,until)){
-                total+=trip.meters;
-                if(trip.end==0||trip.meters<20000)continue;
-                double used=estimateTrip(samples,trip);
-                if(Double.isFinite(used)){litres+=used;covered+=trip.meters;count++;}
-            }
+        for(TripStore.TripSpan trip:spans){
+            total+=trip.meters;
+            if(trip.end==0||trip.meters<20000)continue;
+            double used=estimateTrip(samples,trip);
+            if(Double.isFinite(used)){litres+=used;covered+=trip.meters;count++;}
         }
-        String distance=String.format(Locale.getDefault(),"GPS за период: %.1f км",total/1000);
+        String distance=String.format(Locale.getDefault(),"%s за период: %.1f км",
+            gpsMileage?"GPS":"CAN",total/1000);
         if(count==0)return distance+" · данных для оценки расхода пока мало";
         return distance+String.format(Locale.getDefault(),
             "\nОценка (%d поезд.): %.1f л за %.1f км · %.1f л/100 км",
@@ -250,13 +260,14 @@ public final class FuelActivity extends Activity {
         List<Sample> samples=new ArrayList<>();
         Sample selected;
         private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.Path fill=new android.graphics.Path();
         Plot(){super(FuelActivity.this);setContentDescription("История уровня топлива");}
         private float x(Sample point){
             long first=samples.get(0).time,last=samples.get(samples.size()-1).time;
             return 44+Math.max(1,getWidth()-56)*((float)(point.time-first)/Math.max(1,last-first));
         }
         @Override protected void onDraw(Canvas canvas){
-            canvas.drawColor(0xffeef3f8);
+            canvas.drawColor(0xfff7fafc);
             if(samples.isEmpty())return;
             double max=1;
             for(Sample point:samples)max=Math.max(max,point.level);
@@ -275,6 +286,22 @@ public final class FuelActivity extends Activity {
             String last=day.format(new Date(samples.get(samples.size()-1).time));
             canvas.drawText(first,44,getHeight()-8,paint);
             if(!first.equals(last))canvas.drawText(last,getWidth()-12-paint.measureText(last),getHeight()-8,paint);
+            float bottom=18+height;
+            paint.setShader(new android.graphics.LinearGradient(0,18,0,bottom,
+                0x77276de0,0x08276de0,android.graphics.Shader.TileMode.CLAMP));
+            fill.reset();
+            for(Sample point:samples){
+                float px=x(point),py=18+height*(float)(1-point.level/max);
+                if(previous==null||point.gap){
+                    if(previous!=null){fill.lineTo(x(previous),bottom);fill.close();}
+                    fill.moveTo(px,bottom);fill.lineTo(px,py);
+                }else fill.lineTo(px,py);
+                previous=point;
+            }
+            if(previous!=null){fill.lineTo(x(previous),bottom);fill.close();}
+            canvas.drawPath(fill,paint);
+            paint.setShader(null);
+            previous=null;
             paint.setColor(0xff245ab3);paint.setStrokeWidth(3f);
             for(Sample point:samples){
                 float y=18+height*(float)(1-point.level/max);
@@ -294,8 +321,14 @@ public final class FuelActivity extends Activity {
             int action=event.getActionMasked();
             if(samples.isEmpty()||(action!=MotionEvent.ACTION_DOWN&&action!=MotionEvent.ACTION_MOVE&&
                 action!=MotionEvent.ACTION_UP))return true;
-            Sample best=samples.get(0);
-            for(Sample point:samples)if(Math.abs(x(point)-event.getX())<Math.abs(x(best)-event.getX()))best=point;
+            int lo=0,hi=samples.size()-1;
+            while(lo<hi){
+                int mid=(lo+hi)/2;
+                if(x(samples.get(mid))<event.getX())lo=mid+1;else hi=mid;
+            }
+            Sample best=samples.get(lo);
+            if(lo>0&&Math.abs(x(samples.get(lo-1))-event.getX())<Math.abs(x(best)-event.getX()))
+                best=samples.get(lo-1);
             selected=best;invalidate();
             selection.setText(String.format(Locale.getDefault(),
                 "%s · сырое %.2f · %.1f л · сглаженное %.1f л",date(best.time),best.raw,best.litres,best.level));

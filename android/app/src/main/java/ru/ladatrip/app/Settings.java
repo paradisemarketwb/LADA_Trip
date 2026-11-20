@@ -58,4 +58,10 @@ public final class Settings {
             return new String(cipher.doFinal(packed,12,packed.length-12),StandardCharsets.UTF_8);
         }catch(Exception e){return null;}
     }
+    static android.content.SharedPreferences mileagePreferences(Context context){
+        return context.getSharedPreferences("mileage",Context.MODE_PRIVATE);
+    }
+    static boolean gpsMileage(Context context){
+        return mileagePreferences(context).getBoolean("gps_mileage",false);
+    }
 }

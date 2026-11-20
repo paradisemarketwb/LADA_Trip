@@ -110,8 +110,15 @@ public final class VehicleLogicSmoke {
         catch(IllegalArgumentException error){rejected=true;}
         assertTrue(rejected,"Reject out-of-range manual correction");
     }
+    private static void testCruiseCorrection(){
+        VehicleDisplayFormat.SpeedCalibration previous=VehicleDisplayFormat.SpeedCalibration.manual(1.1,2);
+        VehicleDisplayFormat.SpeedCalibration next=VehicleDisplayFormat.SpeedCalibration.fromCruise(previous,50,60);
+        assertTrue(Math.abs(next.correct(50)-60)<1e-9,"Cruise reference is reproduced");
+        assertTrue(Math.abs(next.offset-2*60.0/57)<1e-9,"Cruise composes existing offset");
+        assertEq(0.0,next.correct(0),"Cruise correction keeps stationary speed at zero");
+    }
     public static void main(String[] args){
-        testSpeed();testSpeedCalibration();testAccessibility();testBackgroundBody();testManualCorrection();
+        testSpeed();testSpeedCalibration();testAccessibility();testBackgroundBody();testManualCorrection();testCruiseCorrection();
         System.out.println("Vehicle contract tests: "+checks+" passed.");
     }
 }

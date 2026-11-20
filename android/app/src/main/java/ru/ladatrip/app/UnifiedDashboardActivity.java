@@ -10,7 +10,6 @@ import android.content.pm.PermissionInfo;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.location.LocationManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -60,6 +59,7 @@ public final class UnifiedDashboardActivity extends Activity {
     private final Map<String,VehicleDisplayFormat.SpeedCalibration> speedCalibrations=new LinkedHashMap<>();
     private static final String[] SPEED_SOURCES={"property","sensor","ui"};
     private static final String[] SPEED_SOURCE_LABELS={"CarService (Humax R2)","CarSensor","Инженерный экран"};
+    private android.widget.CheckBox boot;
     private CanJourneyStore journeys;
     private TripStore tripStore;
     private boolean userStarting;
@@ -163,6 +163,13 @@ public final class UnifiedDashboardActivity extends Activity {
 
         LinearLayout trips=card(root);
         heading(trips,"ИСТОРИЯ ПОЕЗДОК","По CAN — расстояние без GPS; по GPS — маршрут и остановки");
+        Button mileage=button("Источник пробега",false);
+        trips.addView(mileage,spaced(8,4));
+        mileage.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("Пробег на главном экране")
+            .setSingleChoiceItems(new String[]{"CAN","GPS"},useGpsMileage()?1:0,(dialog,index)->{
+                Settings.mileagePreferences(this).edit().putBoolean("gps_mileage",index==1).apply();
+                dialog.dismiss();refresh();
+            }).setNegativeButton("Отмена",null).show());
         canTrips=txt("Поездок CAN ещё нет",13,FG,false);trips.addView(canTrips,spaced(7,8));
         gpsTrips=txt("GPS-поездок ещё нет",13,FG,false);trips.addView(gpsTrips,spaced(7,0));
 
@@ -175,8 +182,17 @@ public final class UnifiedDashboardActivity extends Activity {
             "Без секретных ключей и географических координат");
         Button calibrate=button("Тарировка скорости",false);
         tools.addView(calibrate,spaced(11,0));
-        calibrate.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("Источник скорости")
-            .setItems(SPEED_SOURCE_LABELS,(dialog,index)->editSpeedCalibration(index)).show());
+        calibrate.setOnClickListener(v->new AlertDialog.Builder(this).setTitle("Тарировка скорости")
+            .setItems(new String[]{"По скорости круиз-контроля","Ручные параметры и контрольные точки"},(dialog,index)->{
+                if(index==0)captureCruiseSpeed();
+                else new AlertDialog.Builder(this).setTitle("Источник скорости")
+                    .setItems(SPEED_SOURCE_LABELS,(d,source)->editSpeedCalibration(source)).show();
+            }).show());
+        boot=new android.widget.CheckBox(this);
+        boot.setText("Запускать запись CAN и GPS после загрузки");
+        boot.setChecked(Settings.autoStart(this));
+        boot.setOnCheckedChangeListener((view,checked)->Settings.autoStart(this,checked));
+        tools.addView(boot,spaced(5,0));
         Button systems=button("Система и источники данных",false);
         tools.addView(systems,spaced(5,0));
         systems.setOnClickListener(v->startActivity(new Intent(this,SourceDiagnosticsActivity.class)));
@@ -300,6 +316,50 @@ public final class UnifiedDashboardActivity extends Activity {
             }));
         editor.show();
     }
+    private boolean useGpsMileage(){return Settings.gpsMileage(this);}
+
+    private void captureCruiseSpeed(){
+        VehicleLog.Reading reading=VehicleLog.speed(this);
+        long now=System.currentTimeMillis();
+        if(!("property".equals(reading.source)||"sensor".equals(reading.source))||
+            !VehicleDisplayFormat.fresh(reading.at,now,6000)){
+            toast("Нет свежего показания скорости автомобиля");return;
+        }
+        double measured;
+        try{measured=Double.parseDouble(reading.value);}
+        catch(NumberFormatException bad){toast("Не удалось прочитать скорость");return;}
+        if(!Double.isFinite(measured)||measured<10||measured>240){
+            toast("Нужен замер устойчивой скорости от 10 до 240 км/ч");return;
+        }
+        VehicleDisplayFormat.SpeedCalibration current=speedCalibrations.get(reading.source);
+        double shown=current==null?measured:current.correct(measured);
+        LinearLayout content=column();
+        content.setPadding(dp(20),dp(8),dp(20),0);
+        content.addView(txt(String.format(Locale.getDefault(),
+            "Замер сохранён для этого диалога. Система: %.1f км/ч · с текущей поправкой: %.1f км/ч.",
+            measured,shown),14,FG,false));
+        content.addView(txt("Вводите эталон после остановки или попросите пассажира.",13,MUTED,false));
+        EditText reference=new EditText(this);
+        reference.setSingleLine(true);
+        reference.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        reference.setHint("Скорость круиз-контроля, км/ч");
+        content.addView(reference);
+        AlertDialog editor=new AlertDialog.Builder(this).setTitle("Тарировка по круиз-контролю")
+            .setView(content).setNegativeButton("Отмена",null).setPositiveButton("Применить",null).create();
+        editor.setOnShowListener(d->editor.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            try{
+                double value=Double.parseDouble(reference.getText().toString().trim().replace(',','.'));
+                VehicleDisplayFormat.SpeedCalibration updated=
+                    VehicleDisplayFormat.SpeedCalibration.fromCruise(current,measured,value);
+                calibrationPreferences().edit()
+                    .putString(reading.source+"/factor",Double.toString(updated.factor))
+                    .putString(reading.source+"/offset",Double.toString(updated.offset))
+                    .putBoolean(reading.source+"/enabled",true).apply();
+                loadSpeedCalibrations();refresh();editor.dismiss();
+            }catch(IllegalArgumentException invalid){reference.setError("Проверьте эталон и текущую поправку");}
+        }));
+        editor.show();
+    }
     private boolean showLast(String key){return VehicleDisplayFormat.engineerOnly(key);}
     private void refresh(){
         if(speed==null)return;
@@ -340,8 +400,15 @@ public final class UnifiedDashboardActivity extends Activity {
             if(info!=null)info.setText(sourceLabel(k,now));
         }
         if(gps!=null)gps.setText(GpsHealth.indicator(this,now));
-        if(canTrips!=null)canTrips.setText("CAN · "+journeys.summary());
-        if(gpsTrips!=null)gpsTrips.setText("GPS · "+tripStore.recentTrips());
+        boolean gpsMileage=useGpsMileage();
+        if(canTrips!=null){
+            canTrips.setVisibility(gpsMileage?View.GONE:View.VISIBLE);
+            if(!gpsMileage)canTrips.setText("CAN · "+journeys.summary());
+        }
+        if(gpsTrips!=null){
+            gpsTrips.setVisibility(gpsMileage?View.VISIBLE:View.GONE);
+            if(gpsMileage)gpsTrips.setText("GPS · "+tripStore.recentTrips());
+        }
     }
     private String sourceLabel(String key,long now){
         long time=VehicleLog.at(this,key);
@@ -381,24 +448,21 @@ public final class UnifiedDashboardActivity extends Activity {
     }
     private void enableAll(){
         userStarting=false;
-        // One-time opt-in starts both monitors on future Android boots.
-        Settings.autoStart(this,true);
         getSharedPreferences("vehicle_live_settings",MODE_PRIVATE).edit()
             .putBoolean("auto_with_gps",true).apply();
         try{startForegroundService(new Intent(this,VehicleLiveService.class));}
         catch(Exception e){toast("CAN: "+e.getClass().getSimpleName());}
         if(checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)==PackageManager.PERMISSION_GRANTED){
-            LocationManager lm=(LocationManager)getSystemService(LOCATION_SERVICE);
-            if(lm!=null&&lm.isProviderEnabled(LocationManager.GPS_PROVIDER)){
-                try{Settings.monitor(this,true);
-                    startForegroundService(new Intent(this,TripService.class));}
-                catch(Exception ex){toast("GPS: "+ex.getClass().getSimpleName());}
-            }else toast("GPS выключен. Монитор CAN продолжает работать.");
+            try{
+                Settings.monitor(this,true);
+                startForegroundService(new Intent(this,TripService.class));
+            }catch(Exception ex){toast("GPS: "+ex.getClass().getSimpleName());}
         }
         refresh();
     }
     private void stopAll(){
         Settings.monitor(this,false);
+        boot.setChecked(false);
         Settings.autoStart(this,false);
         getSharedPreferences("vehicle_live_settings",MODE_PRIVATE).edit()
             .putBoolean("auto_with_gps",false).apply();

@@ -157,7 +157,7 @@ public final class UnifiedDashboardActivity extends Activity {
         quick.addView(metrics,spaced(12,7));
         metric(metrics,"FUEL_L","ТОПЛИВО","л");
         metric(metrics,"OUTSIDE_C","НА УЛИЦЕ","°C");
-        Button fuel=button("История, тарировка и расход",false);
+        Button fuel=button("Топливо · расход л/100 км",false);
         quick.addView(fuel,spaced(8,0));
         fuel.setOnClickListener(v->startActivity(new Intent(this,FuelActivity.class)));
 
@@ -175,7 +175,7 @@ public final class UnifiedDashboardActivity extends Activity {
 
         Button map=button("Карта поездок",true);
         trips.addView(map,spaced(8,0));
-        map.setOnClickListener(v->startActivity(new Intent(this,YandexTripMapActivity.class)));
+        map.setOnClickListener(v->startActivity(new Intent(this,RouteMapActivity.class)));
 
         LinearLayout tools=card(root);
         heading(tools,"ОДИН ЭКСПОРТ · ПОЛНАЯ ДИАГНОСТИКА",

@@ -40,4 +40,11 @@ final class FuelCalibration {
         }
         return Double.NaN;
     }
+    static double consumption(double km,double litres){
+        if(!Double.isFinite(km)||!Double.isFinite(litres)||km<=0||litres<=0)
+            throw new IllegalArgumentException("Expected positive distance and fuel");
+        double result=100*litres/km;
+        if(!Double.isFinite(result))throw new IllegalArgumentException("Invalid consumption");
+        return result;
+    }
 }

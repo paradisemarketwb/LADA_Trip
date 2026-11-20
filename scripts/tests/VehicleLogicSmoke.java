@@ -126,8 +126,13 @@ public final class VehicleLogicSmoke {
         assertTrue(Math.abs(VehicleDisplayFormat.SpeedCalibration.fromDisplayed(null,48,50).correct(48)-50)<1e-9,
             "Past reading without a profile uses identity");
     }
+    private static void testGpsStep(){
+        assertTrue(VehicleDisplayFormat.plausibleGpsStep(110,1,35,35),"Realistic step within uncertainty");
+        assertTrue(!VehicleDisplayFormat.plausibleGpsStep(600,1,150,150),"Reject large GPS jump");
+        assertTrue(!VehicleDisplayFormat.plausibleGpsStep(1,0,5,5),"Reject duplicate GPS time");
+    }
     public static void main(String[] args){
-        testSpeed();testSpeedCalibration();testAccessibility();testBackgroundBody();testManualCorrection();testCruiseCorrection();testPastCruiseCorrection();
+        testSpeed();testSpeedCalibration();testAccessibility();testBackgroundBody();testManualCorrection();testCruiseCorrection();testPastCruiseCorrection();testGpsStep();
         System.out.println("Vehicle contract tests: "+checks+" passed.");
     }
 }

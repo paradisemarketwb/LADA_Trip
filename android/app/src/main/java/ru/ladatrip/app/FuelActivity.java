@@ -28,7 +28,7 @@ public final class FuelActivity extends Activity {
     private static final String[] LABELS={"CarService","CarSensor","Инженерный экран"};
     private static final long DAY=86400000L;
     private final ExecutorService reader=Executors.newSingleThreadExecutor();
-    private TextView summary,selection;
+    private TextView summary,selection,consumption,manualConsumption;
     private ProgressBar gauge;
     private Plot plot;
     private int source;
@@ -54,6 +54,15 @@ public final class FuelActivity extends Activity {
                     if(p>0)period=DAY*new int[]{1,7,30}[p-1];
                     load();
                 }).show()).show());
+        TextView consumptionTitle=new TextView(this);
+        consumptionTitle.setText("Расход топлива · л/100 км");consumptionTitle.setTextSize(17);
+        screen.addView(consumptionTitle);
+        consumption=new TextView(this);consumption.setTextSize(18);screen.addView(consumption);
+        manualConsumption=new TextView(this);screen.addView(manualConsumption);
+        Button manual=new Button(this);manual.setText("Рассчитать по заправке");
+        manual.setOnClickListener(v->editFuelEstimate());
+        screen.addView(manual);
+        showManualConsumption();
         plot=new Plot();screen.addView(plot,new LinearLayout.LayoutParams(-1,0,1));
         selection=new TextView(this);screen.addView(selection);
         Button calibrate=new Button(this);calibrate.setText("Ёмкость бака и точки тарировки");
@@ -98,6 +107,7 @@ public final class FuelActivity extends Activity {
         long until=customUntil!=0?customUntil:Long.MAX_VALUE;
         boolean onlyCurrent=activeTrip;
         boolean gpsMileage=Settings.gpsMileage(this);
+        consumption.setText("Считаем по журналу…");
         selection.setText("Коснитесь графика для просмотра сырого и сглаженного показаний.");
         reader.execute(()->{
             try(VehicleLog log=new VehicleLog(this)){
@@ -113,6 +123,7 @@ public final class FuelActivity extends Activity {
                             if(isDestroyed()||generation!=loadGeneration)return;
                             plot.samples=new ArrayList<>();plot.invalidate();gauge.setVisibility(View.GONE);
                             summary.setText("Нет активной поездки для выбранного источника пробега.");
+                            consumption.setText("Автооценка: — л/100 км");
                         });
                         return;
                     }
@@ -150,8 +161,9 @@ public final class FuelActivity extends Activity {
                     if(isDestroyed()||generation!=loadGeneration)return;
                     plot.samples=samples;plot.selected=null;plot.invalidate();
                     gauge.setVisibility(View.GONE);
+                    consumption.setText(estimate);
                     if(samples.isEmpty()){
-                        summary.setText(label+" · за выбранный период нет показаний в диапазоне тарировки\n"+estimate);
+                        summary.setText(label+" · за выбранный период нет показаний в диапазоне тарировки");
                         return;
                     }
                     Sample newest=samples.get(samples.size()-1);
@@ -165,7 +177,6 @@ public final class FuelActivity extends Activity {
                         date(newest.time),up,down));
                     if(samples.size()>1)summary.append(String.format(Locale.getDefault(),
                         "\nИзменение уровня за период: %+.1f л",newest.level-samples.get(0).level));
-                    summary.append("\n"+estimate);
                     if(capacity>0){
                         int percent=(int)Math.min(100,Math.round(newest.litres/capacity*100));
                         gauge.setVisibility(View.VISIBLE);gauge.setProgress(percent);
@@ -174,7 +185,8 @@ public final class FuelActivity extends Activity {
                 });
             }catch(RuntimeException error){
                 runOnUiThread(()->{if(!isDestroyed()&&generation==loadGeneration)
-                    summary.setText("Не удалось прочитать историю топлива.");});
+                    {summary.setText("Не удалось прочитать историю топлива.");
+                     consumption.setText("Автооценка: — л/100 км");}});
             }
         });
     }
@@ -195,10 +207,11 @@ public final class FuelActivity extends Activity {
         }
         String distance=String.format(Locale.getDefault(),"%s за период: %.1f км",
             gpsMileage?"GPS":"CAN",total/1000);
-        if(count==0)return distance+" · данных для оценки расхода пока мало";
+        if(count==0)return "Автооценка: — л/100 км\n"+distance+
+            " · нужна завершённая поездка от 20 км с замерами уровня у начала и конца.";
         return distance+String.format(Locale.getDefault(),
-            "\nОценка (%d поезд.): %.1f л за %.1f км · %.1f л/100 км",
-            count,litres,covered/1000,litres*100000/covered);
+            "\nАвтооценка: %.1f л/100 км · %.1f л за %.1f км (%d поезд.)",
+            FuelCalibration.consumption(covered/1000,litres),litres,covered/1000,count);
     }
     private double estimateTrip(List<Sample> samples,TripStore.TripSpan trip){
         Sample start=null,end=null,previous=null;
@@ -214,6 +227,45 @@ public final class FuelActivity extends Activity {
         if(start==null||end==null||!start.stable||!end.stable||trip.start-start.time>60000)return Double.NaN;
         double used=start.level-end.level;
         return used>=2&&used*100000/trip.meters<=40?used:Double.NaN;
+    }
+    private void showManualConsumption(){
+        String km=settings().getString("fill_km",""),litres=settings().getString("fill_litres","");
+        if(km.isEmpty()||litres.isEmpty()){
+            manualConsumption.setText("По заправке: — л/100 км");
+            return;
+        }
+        double distance=Double.parseDouble(km),fuel=Double.parseDouble(litres);
+        manualConsumption.setText(String.format(Locale.getDefault(),
+            "По заправке: %.1f л/100 км · %.1f л за %.1f км",
+            FuelCalibration.consumption(distance,fuel),fuel,distance));
+    }
+
+    private void editFuelEstimate(){
+        LinearLayout form=new LinearLayout(this);form.setOrientation(LinearLayout.VERTICAL);
+        EditText km=new EditText(this),litres=new EditText(this);
+        km.setHint("Пробег с прошлой полной заправки, км");
+        litres.setHint("Залито до полного бака, л");
+        for(EditText input:new EditText[]{km,litres}){
+            input.setSingleLine(true);
+            input.setInputType(android.text.InputType.TYPE_CLASS_NUMBER|
+                android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL);
+            form.addView(input);
+        }
+        km.setText(settings().getString("fill_km",""));litres.setText(settings().getString("fill_litres",""));
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("Расход по заправке")
+            .setMessage("Для расчёта между двумя полными заправками укажите пробег и литры, залитые на второй заправке.")
+            .setView(form).setNegativeButton("Отмена",null).setPositiveButton("Рассчитать",null).create();
+        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
+            try{
+                double distance=Double.parseDouble(km.getText().toString().trim().replace(',','.'));
+                double volume=Double.parseDouble(litres.getText().toString().trim().replace(',','.'));
+                FuelCalibration.consumption(distance,volume);
+                settings().edit().putString("fill_km",Double.toString(distance))
+                    .putString("fill_litres",Double.toString(volume)).apply();
+                showManualConsumption();dialog.dismiss();
+            }catch(IllegalArgumentException invalid){litres.setError("Введите положительные пробег и литры");}
+        }));
+        dialog.show();
     }
     private void editCalibration(){
         String key=SOURCES[source];

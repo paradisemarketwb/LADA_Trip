@@ -24,8 +24,15 @@ public final class FuelLogicSmoke {
             assertTrue(rejected,"Invalid fuel curve rejected");
         }
     }
+    private static void testConsumption(){
+        assertEq(6.0,FuelCalibration.consumption(250,15),"Litres per 100 km");
+        boolean rejected=false;
+        try{FuelCalibration.consumption(0,15);}
+        catch(IllegalArgumentException invalid){rejected=true;}
+        assertTrue(rejected,"Reject zero distance");
+    }
     public static void main(String[] args){
-        testFuelCalibration();
+        testFuelCalibration();testConsumption();
         System.out.println("Fuel contract tests: "+checks+" passed.");
     }
 }

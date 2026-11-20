@@ -83,7 +83,7 @@ public final class TripService extends Service implements LocationListener {
         location=(LocationManager)getSystemService(LOCATION_SERVICE);
         if(location==null){GpsHealth.registration(this,"LocationManager недоступен");return;}
         try{
-            long interval=GpsSettingsActivity.preferences(this).getBoolean("frequent",false)?2000:5000;
+            long interval=GpsSettingsActivity.preferences(this).getBoolean("frequent",false)?2000:3000;
             location.requestLocationUpdates(LocationManager.GPS_PROVIDER,interval,0f,this,Looper.getMainLooper());
             gpsSubscribed=true;
             updateGpsRegistration();
@@ -116,7 +116,7 @@ public final class TripService extends Service implements LocationListener {
         GpsHealth.raw(this,fix);
         if(fix==null){GpsHealth.rejected(this,"Нет объекта Location");return;}
         if(!fix.hasAccuracy()){GpsHealth.rejected(this,"Нет информации о точности GPS");return;}
-        int accuracyLimit=GpsSettingsActivity.preferences(this).getBoolean("strict",false)?30:80;
+        int accuracyLimit=GpsSettingsActivity.preferences(this).getBoolean("strict",false)?30:150;
         if(!Float.isFinite(fix.getAccuracy())||fix.getAccuracy()<0||fix.getAccuracy()>accuracyLimit){
             GpsHealth.rejected(this,"Неподходящая точность GPS (порог "+accuracyLimit+" м)");return;
         }
@@ -124,7 +124,7 @@ public final class TripService extends Service implements LocationListener {
             GpsHealth.rejected(this,"Точка от тестового провайдера");return;
         }
         long ageNanos=android.os.SystemClock.elapsedRealtimeNanos()-fix.getElapsedRealtimeNanos();
-        if(fix.getElapsedRealtimeNanos()<=0||ageNanos<0||ageNanos>15_000_000_000L){
+        if(fix.getElapsedRealtimeNanos()<=0||ageNanos<0||ageNanos>25_000_000_000L){
             GpsHealth.rejected(this,"Устаревшая GPS-метка");return;
         }
         try{
@@ -136,7 +136,7 @@ public final class TripService extends Service implements LocationListener {
             return;
         }
         GpsHealth.accepted(this,fix);
-        speedReference.observe(this,fix);
+        if(fix.getAccuracy()<=80)speedReference.observe(this,fix);
         ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(MONITOR_ID,createNotification("GPS: ±"+Math.round(fix.getAccuracy())+" м"));
     }
     @Override public void onStatusChanged(String provider,int status,Bundle extras){}

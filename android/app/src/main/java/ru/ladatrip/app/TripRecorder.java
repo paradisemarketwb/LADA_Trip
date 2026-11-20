@@ -32,11 +32,16 @@ public final class TripRecorder {
         double meters=continuous?distance(prior,fix):0;
         double secs=continuous?(fix.time-prior.time)/1000.0:0;
         // A rejected jump can't become the baseline for distance or last known location.
-        if(continuous && meters/secs>65)return false;
+        if(continuous && !VehicleDisplayFormat.plausibleGpsStep(meters,secs,prior.accuracy,fix.accuracy))
+            return false;
         if(!continuous){stationarySince=0;stopSaved=false;movingSamples=0;}
         float speed=location.hasSpeed()&&Float.isFinite(location.getSpeed())&&location.getSpeed()>=0
             ?location.getSpeed():-1f;
-        boolean moving=(speed>=2.0f) || (secs>0 && secs<=30 && meters>25 && meters/secs>=2.0);
+        boolean speedReliable=speed>=0&&(!location.hasSpeedAccuracy()||
+            location.getSpeedAccuracyMetersPerSecond()<=2.5f);
+        boolean goodPosition=continuous&&prior.accuracy<=80&&fix.accuracy<=80;
+        boolean moving=(speedReliable&&speed>=2.0f) ||
+            (goodPosition&&secs<=30&&meters>Math.max(25,fix.accuracy+prior.accuracy)&&meters/secs>=2.0);
         if(tripId==0) {
             movingSamples=moving?movingSamples+1:0;
             if(movingSamples>=2) {
@@ -52,7 +57,8 @@ public final class TripRecorder {
                     stationarySince=0;stopSaved=false;
                 }
             } else if(stationarySince==0) {stationarySince=fix.time;stopSaved=false;}
-            store.addPoint(tripId,fix,speed,moving&&continuous&&meters>=7?meters:0);
+            store.addPoint(tripId,fix,speedReliable?speed:-1,
+                moving&&goodPosition&&meters>=7&&meters/secs<=65?meters:0);
             if(stationarySince!=0 && fix.time-stationarySince>=TRIP_END_STOP_MS) {
                 if(!stopSaved){store.addStop(tripId,stationarySince,fix.time,fix);stopSaved=true;}
                 finish(fix);

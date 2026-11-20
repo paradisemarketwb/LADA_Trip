@@ -50,10 +50,14 @@ public final class GpsSettingsActivity extends Activity {
             new Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)));
         button(page,"Начать / переподключить GPS",this::restartGps);
         CheckBox strict=new CheckBox(this);
-        strict.setText("Строгий фильтр: принимать точки с точностью до 30 м");
+        strict.setText("Строгий режим GPS: принимать точки только до 30 м");
         strict.setChecked(preferences(this).getBoolean("strict",false));
         strict.setOnCheckedChangeListener((v,checked)->preferences(this).edit().putBoolean("strict",checked).apply());
         page.addView(strict);
+        TextView quality=new TextView(this);
+        quality.setText("В обычном режиме слабая точка до 150 м помогает восстановить маршрут. "
+            +"Участки с низкой точностью не увеличивают GPS-пробег. Число спутников в решении сообщает приёмник.");
+        page.addView(quality);
         CheckBox frequent=new CheckBox(this);
         frequent.setText("Чаще запрашивать GPS: каждые 2 секунды");
         frequent.setChecked(preferences(this).getBoolean("frequent",false));
@@ -70,7 +74,7 @@ public final class GpsSettingsActivity extends Activity {
                 openMap(this,last.lat,last.lon);
             }
         });
-        button(page,"Карта поездок",()->startActivity(new Intent(this,YandexTripMapActivity.class)));
+        button(page,"Карта поездок",()->startActivity(new Intent(this,RouteMapActivity.class)));
     }
 
     private void restartGps(){

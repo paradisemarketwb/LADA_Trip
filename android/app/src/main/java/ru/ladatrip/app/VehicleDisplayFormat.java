@@ -118,6 +118,13 @@ public final class VehicleDisplayFormat {
         }
     }
 
+    static boolean plausibleGpsStep(double metres,double seconds,double oldAccuracy,double accuracy){
+        if(!Double.isFinite(metres)||!Double.isFinite(seconds)||seconds<=0||metres<0||
+            !Double.isFinite(oldAccuracy)||!Double.isFinite(accuracy)||oldAccuracy<0||accuracy<0)
+            return false;
+        return metres<=65*seconds+Math.min(100,oldAccuracy+accuracy);
+    }
+
     public static final class SpeedCalibration {
         public final double factor, offset;
         private SpeedCalibration(double factor,double offset){

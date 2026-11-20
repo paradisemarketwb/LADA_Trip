@@ -60,7 +60,7 @@ public final class GpsHealth {
         SharedPreferences.Editor edit=sp.edit()
             .putInt("valid_callbacks",sp.getInt("valid_callbacks",0)+1)
             .putLong("last_valid_at",System.currentTimeMillis());
-        if(fix.hasSpeed()&&Float.isFinite(fix.getSpeed())&&fix.getSpeed()>=0)
+        if(fix.getAccuracy()<=80&&(!fix.hasSpeedAccuracy()||fix.getSpeedAccuracyMetersPerSecond()<=2.5f)&&fix.hasSpeed()&&Float.isFinite(fix.getSpeed())&&fix.getSpeed()>=0)
             edit.putFloat("speed_kmh",fix.getSpeed()*3.6f);
         else edit.remove("speed_kmh");
         edit.apply();
@@ -119,8 +119,10 @@ public final class GpsHealth {
         return (running?"GPS-служба запущена":"GPS-служба не запущена")+
             "\nРегистрация: "+p.getString("subscription","ещё не проверялась")+
             "\nGNSS: "+p.getString("gnss_state","—")+
-            " · спутников "+p.getInt("satellites_seen",0)+
-            " / в решении "+p.getInt("satellites_used",0)+
+            " · приёмник видит "+p.getInt("satellites_seen",0)+
+            " / использует "+p.getInt("satellites_used",0)+
+            "\nТочность последней точки: "+(p.getFloat("last_accuracy_m",-1)>=0?
+                "±"+Math.round(p.getFloat("last_accuracy_m",-1))+" м":"неизвестна")+
             "\nПолучено GPS-событий: "+p.getInt("raw_callbacks",0)+
             " · принято: "+p.getInt("valid_callbacks",0)+
             " · отклонено: "+p.getInt("rejected_callbacks",0)+

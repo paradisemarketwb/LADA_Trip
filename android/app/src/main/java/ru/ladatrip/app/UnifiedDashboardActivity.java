@@ -135,6 +135,10 @@ public final class UnifiedDashboardActivity extends Activity {
         loadSpeedCalibrations();
         status=txt("Мониторинг ещё не запущен",13,WHITE,true);
         hero.addView(status,spaced(14,5));
+        gps=txt("GPS: нет данных",12,WHITE,false);hero.addView(gps,spaced(4,0));
+        Button gpsSettings=button("GPS и карты",false);
+        hero.addView(gpsSettings,spaced(8,0));
+        gpsSettings.setOnClickListener(v->startActivity(new Intent(this,GpsSettingsActivity.class)));
         hero.addView(txt("«Начать всё» включает автоматическую запись после включения автомобиля. «Стоп» отключает её.",11,Color.rgb(183,208,236),false),spaced(4,3));
 
         LinearLayout actions=row();hero.addView(actions,spaced(10,0));
@@ -149,40 +153,16 @@ public final class UnifiedDashboardActivity extends Activity {
         LinearLayout quick=card(root);
         heading(quick,"ПОКАЗАНИЯ В РЕАЛЬНОМ ВРЕМЕНИ",
             "Только подтверждённые источники, без искусственных значений");
-        LinearLayout metrics1=row(),metrics2=row();quick.addView(metrics1,spaced(12,7));quick.addView(metrics2);
-        metric(metrics1,"FUEL_L","ТОПЛИВО","л");
-        metric(metrics1,"OUTSIDE_C","НА УЛИЦЕ","°C");
-        metric(metrics2,"RPM","ОБОРОТЫ","об/мин");
-        metric(metrics2,"COOLANT_C","ТЕМПЕРАТУРА ОЖ","°C");
-
-        Button fuel=button("История и тарировка топлива",false);
+        LinearLayout metrics=row();
+        quick.addView(metrics,spaced(12,7));
+        metric(metrics,"FUEL_L","ТОПЛИВО","л");
+        metric(metrics,"OUTSIDE_C","НА УЛИЦЕ","°C");
+        Button fuel=button("История, тарировка и расход",false);
         quick.addView(fuel,spaced(8,0));
         fuel.setOnClickListener(v->startActivity(new Intent(this,FuelActivity.class)));
 
-        LinearLayout car=card(root);
-        heading(car,"СОСТОЯНИЕ АВТОМОБИЛЯ",null);
-        field(car,"IGNITION","Зажигание","");
-        field(car,"ENGINE","Двигатель","");
-        field(car,"HANDBRAKE","Ручник","");
-        field(car,"GEAR","Передача","");
-        field(car,"REVERSE","Задняя передача","");
-        field(car,"FUEL_LOW","Резерв топлива","");
-        field(car,"STEER_RAW","Поворот руля","ед.");
-        car.addView(txt("Сигналы из инженерного меню сохраняются как последний снимок, а не подменяются текущими. RPM и ОЖ без разрешения доступны только через отдельный ELM327.",12,MUTED,false),spaced(8,0));
-
-        LinearLayout doors=card(root);
-        heading(doors,"КУЗОВ И ОХРАНА","Статусы обновляются только из разрешённых источников");
-        field(doors,"DRIVER_DOOR","Дверь водителя","");
-        field(doors,"PASSENGER_DOOR","Передняя пассажирская","");
-        field(doors,"REAR_LEFT_DOOR","Задняя левая","");
-        field(doors,"REAR_RIGHT_DOOR","Задняя правая","");
-        field(doors,"TAIL_GATE","Багажник","");
-        field(doors,"HOOD","Капот","");
-        field(doors,"ALARM","Охрана","");
-
         LinearLayout trips=card(root);
         heading(trips,"ИСТОРИЯ ПОЕЗДОК","По CAN — расстояние без GPS; по GPS — маршрут и остановки");
-        gps=txt("GPS: нет данных",12,MUTED,false);trips.addView(gps,spaced(10,5));
         canTrips=txt("Поездок CAN ещё нет",13,FG,false);trips.addView(canTrips,spaced(7,8));
         gpsTrips=txt("GPS-поездок ещё нет",13,FG,false);trips.addView(gpsTrips,spaced(7,0));
 
@@ -247,10 +227,18 @@ public final class UnifiedDashboardActivity extends Activity {
         speedCalibrations.clear();
         for(String source:SPEED_SOURCES){
             if(!preferences.getBoolean(source+"/enabled",false))continue;
-            try{speedCalibrations.put(source,VehicleDisplayFormat.SpeedCalibration.parse(
-                preferences.getString(source+"/points","")));}
+            try{speedCalibrations.put(source,readCalibration(
+                preferences.getString(source+"/points",""),preferences.getString(source+"/factor",""),
+                preferences.getString(source+"/offset","")));}
             catch(IllegalArgumentException ignored){}
         }
+    }
+    private VehicleDisplayFormat.SpeedCalibration readCalibration(String points,String factor,String offset){
+        factor=factor.trim().replace(',','.');
+        offset=offset.trim().replace(',','.');
+        if(factor.isEmpty()&&offset.isEmpty())return VehicleDisplayFormat.SpeedCalibration.parse(points);
+        return VehicleDisplayFormat.SpeedCalibration.manual(factor.isEmpty()?1:Double.parseDouble(factor),
+            offset.isEmpty()?0:Double.parseDouble(offset));
     }
     private void editSpeedCalibration(int index){
         String source=SPEED_SOURCES[index];
@@ -263,6 +251,14 @@ public final class UnifiedDashboardActivity extends Activity {
         points.setMinLines(3);
         points.setText(preferences.getString(source+"/points",""));
         content.addView(points);
+        EditText factor=new EditText(this),offset=new EditText(this);
+        factor.setSingleLine(true);offset.setSingleLine(true);
+        factor.setHint("Коэффициент, например 1,05");
+        offset.setHint("Поправка в км/ч, например −2");
+        factor.setText(preferences.getString(source+"/factor",""));
+        offset.setText(preferences.getString(source+"/offset",""));
+        content.addView(factor);content.addView(offset);
+        content.addView(txt("Для ручной поправки заполните коэффициент или смещение. Для расчёта по точкам оставьте оба поля пустыми.",13,FG,false));
         if(!"ui".equals(source)){
             Button reference=button("Подставить проверенные GPS-точки",false);
             content.addView(reference);
@@ -282,7 +278,7 @@ public final class UnifiedDashboardActivity extends Activity {
                 .setTitle("Сохранённая тарировка")
                 .setItems(new String[]{"Отключить","Сбросить"},(menu,option)->{
                     SharedPreferences.Editor change=preferences.edit().remove(source+"/enabled");
-                    if(option==1)change.remove(source+"/points");
+                    if(option==1)change.remove(source+"/points").remove(source+"/factor").remove(source+"/offset");
                     change.apply();
                     loadSpeedCalibrations();refresh();
                 }).show())
@@ -291,12 +287,12 @@ public final class UnifiedDashboardActivity extends Activity {
             .setOnClickListener(v->{
                 String input=points.getText().toString().trim();
                 VehicleDisplayFormat.SpeedCalibration profile;
-                try{profile=VehicleDisplayFormat.SpeedCalibration.parse(input);}
+                try{profile=readCalibration(input,factor.getText().toString(),offset.getText().toString());}
                 catch(IllegalArgumentException invalid){
-                    points.setError("Проверьте пары скоростей (0–240 км/ч) и направление зависимости");
+                    points.setError("Проверьте пары скоростей или ручную поправку (коэффициент 0,5–2, смещение ±30 км/ч)");
                     return;
                 }
-                preferences.edit().putString(source+"/points",input)
+                preferences.edit().putString(source+"/points",input).putString(source+"/factor",factor.getText().toString()).putString(source+"/offset",offset.getText().toString())
                     .putBoolean(source+"/enabled",true).apply();
                 loadSpeedCalibrations();refresh();editor.dismiss();
                 toast(String.format(Locale.getDefault(),"Коэффициент %.4f · смещение %+.1f км/ч",
@@ -313,18 +309,22 @@ public final class UnifiedDashboardActivity extends Activity {
         status.setText("CAN: "+(carActive?"включён":"выключен")+
             "     GPS: "+(gpsActive?"включён":"выключен"));
         VehicleLog.Reading carSpeed=VehicleLog.speed(this);
-        String corrected="—";
+        String original="";
         if(VehicleDisplayFormat.fresh(carSpeed.at,now,12000)){
             speed.setText(carSpeed.value);
             speedOrigin.setText("CAN · "+sourceLabel("SPEED",now));
             VehicleDisplayFormat.SpeedCalibration profile=speedCalibrations.get(carSpeed.source);
             if(profile!=null){
-                try{corrected=formatSpeed(profile.correct(Double.parseDouble(carSpeed.value)));}
+                try{
+                    double adjusted=profile.correct(Double.parseDouble(carSpeed.value));
+                    original=" · Исходная: "+formatSpeed(Double.parseDouble(carSpeed.value));
+                    speed.setText(String.format(Locale.getDefault(),"%.1f",adjusted));
+                    speedOrigin.append(" · с поправкой");
+                }
                 catch(NumberFormatException ignored){}
             }
         }else{speed.setText("—");speedOrigin.setText("CAN · нет свежей скорости");}
-        speedComparison.setText("GPS: "+formatSpeed(GpsHealth.freshSpeed(this,now))+
-            "   ·   Тарировка: "+corrected);
+        speedComparison.setText("GPS: "+formatSpeed(GpsHealth.freshSpeed(this,now))+original);
         for(Map.Entry<String,TextView> entry:values.entrySet()){
             String k=entry.getKey(),src=VehicleLog.source(this,k);
             long at=VehicleLog.at(this,k);
@@ -339,7 +339,7 @@ public final class UnifiedDashboardActivity extends Activity {
             TextView info=sources.get(k);
             if(info!=null)info.setText(sourceLabel(k,now));
         }
-        if(gps!=null)gps.setText(GpsHealth.summary(this));
+        if(gps!=null)gps.setText(GpsHealth.indicator(this,now));
         if(canTrips!=null)canTrips.setText("CAN · "+journeys.summary());
         if(gpsTrips!=null)gpsTrips.setText("GPS · "+tripStore.recentTrips());
     }

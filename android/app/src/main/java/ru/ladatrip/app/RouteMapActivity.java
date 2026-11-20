@@ -28,7 +28,7 @@ public final class RouteMapActivity extends Activity {
     private final ExecutorService reader=Executors.newSingleThreadExecutor();
     private RouteView map;
     private TextView detail;
-    private Button select;
+    private Button select,externalMap;
     private long selected;
 
     @Override public void onCreate(Bundle state){
@@ -45,6 +45,14 @@ public final class RouteMapActivity extends Activity {
         screen.addView(select,new LinearLayout.LayoutParams(-1,-2));
         screen.addView(map,new LinearLayout.LayoutParams(-1,0,1));
         screen.addView(detail,new LinearLayout.LayoutParams(-1,-2));
+        externalMap=new Button(this);
+        externalMap.setText("Открыть выбранную точку в навигаторе");
+        externalMap.setEnabled(false);
+        externalMap.setOnClickListener(v->{
+            TripStore.RoutePoint point=map.chosen;
+            if(point!=null)GpsSettingsActivity.openMap(this,point.lat,point.lon);
+        });
+        screen.addView(externalMap,new LinearLayout.LayoutParams(-1,-2));
         setContentView(screen);
         select.setOnClickListener(v->choices(true));
         selected=state==null?0:state.getLong("selected");
@@ -149,7 +157,7 @@ public final class RouteMapActivity extends Activity {
             return true;
         }
         void update(TripStore.Route value,TripStore.Fix fix){
-            route=value;last=fix;chosen=null;zoom=1;offsetX=0;offsetY=0;
+            route=value;last=fix;chosen=null;externalMap.setEnabled(false);zoom=1;offsetX=0;offsetY=0;
             fitRoute();invalidate();
         }
         @Override protected void onSizeChanged(int w,int h,int oldW,int oldH){fitRoute();}
@@ -216,7 +224,7 @@ public final class RouteMapActivity extends Activity {
                 }
             }
             if(winner==null)return;
-            chosen=winner;invalidate();
+            chosen=winner;externalMap.setEnabled(true);invalidate();
             boolean stop=route.stops.contains(winner);
             String speed=stop?"остановка":Double.isFinite(winner.speed)?
                 String.format(Locale.getDefault(),"%.1f км/ч",winner.speed*3.6):"скорость неизвестна";

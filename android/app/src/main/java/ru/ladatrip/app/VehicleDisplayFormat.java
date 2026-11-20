@@ -129,6 +129,11 @@ public final class VehicleDisplayFormat {
             if(!Double.isFinite(speed)||speed<0)return Double.NaN;
             return speed==0?0:Math.max(0,speed*factor+offset);
         }
+        static SpeedCalibration manual(double factor,double offset){
+            if(factor<0.5||factor>2||Math.abs(offset)>30)
+                throw new IllegalArgumentException("Manual correction outside range");
+            return new SpeedCalibration(factor,offset);
+        }
         /** Least-squares fit for control points expressed in km/h. */
         public static SpeedCalibration fit(double[] measured,double[] reference){
             if(measured.length!=reference.length||measured.length<2)

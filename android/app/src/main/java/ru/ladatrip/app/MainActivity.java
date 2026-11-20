@@ -75,8 +75,7 @@ public final class MainActivity extends Activity {
         gpsHealthView=text("Состояние GPS…",12,MUTED,false);gps.addView(gpsHealthView,lp(0,10));
         Button locate=button("Открыть точку на карте  ↗",false);gps.addView(locate,new LinearLayout.LayoutParams(-1,dp(48)));
         locate.setOnClickListener(v->{TripStore.Fix f=store.lastFix();if(f==null){toast("GPS-координат пока нет");return;}
-            Intent i=new Intent(Intent.ACTION_VIEW,Uri.parse(String.format(Locale.US,"https://www.google.com/maps?q=%.6f,%.6f",f.lat,f.lon)));
-            try{startActivity(i);}catch(Exception e){toast("Нет приложения для карты");}
+            GpsSettingsActivity.openMap(this,f.lat,f.lon);
         });
 
         LinearLayout history=card(root,"НЕДАВНИЕ ПОЕЗДКИ");

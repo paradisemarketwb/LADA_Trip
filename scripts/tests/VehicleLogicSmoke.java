@@ -101,8 +101,17 @@ public final class VehicleLogicSmoke {
         assertEq("Выключена",VehicleDisplayFormat.state("REVERSE","1","property"),"Reverse disengaged");
         assertEq("Тревога",VehicleDisplayFormat.state("ALARM","7","property"),"Active alarm");
     }
+    private static void testManualCorrection(){
+        VehicleDisplayFormat.SpeedCalibration manual=VehicleDisplayFormat.SpeedCalibration.manual(1.05,-2);
+        assertEq(40.0,manual.correct(40),"Manual factor and offset");
+        assertEq(0.0,manual.correct(0),"Manual offset never raises zero");
+        boolean rejected=false;
+        try{VehicleDisplayFormat.SpeedCalibration.manual(3,0);}
+        catch(IllegalArgumentException error){rejected=true;}
+        assertTrue(rejected,"Reject out-of-range manual correction");
+    }
     public static void main(String[] args){
-        testSpeed();testSpeedCalibration();testAccessibility();testBackgroundBody();
+        testSpeed();testSpeedCalibration();testAccessibility();testBackgroundBody();testManualCorrection();
         System.out.println("Vehicle contract tests: "+checks+" passed.");
     }
 }

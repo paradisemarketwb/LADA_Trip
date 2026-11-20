@@ -140,13 +140,13 @@ public final class FuelActivity extends Activity {
                     samples.add(new Sample(reading.at,raw,litres,level,gap,sorted.length==5));
                 }
                 int up=rises,down=drops;
-                String estimate=estimate(samples);
+                String estimate=estimate(samples,start,until);
                 runOnUiThread(()->{
                     if(isDestroyed()||generation!=loadGeneration)return;
-                    plot.samples=samples;plot.invalidate();
+                    plot.samples=samples;plot.selected=null;plot.invalidate();
                     gauge.setVisibility(View.GONE);
                     if(samples.isEmpty()){
-                        summary.setText(label+" · за выбранный период нет показаний в диапазоне тарировки");
+                        summary.setText(label+" · за выбранный период нет показаний в диапазоне тарировки\n"+estimate);
                         return;
                     }
                     Sample newest=samples.get(samples.size()-1);
@@ -160,7 +160,7 @@ public final class FuelActivity extends Activity {
                         date(newest.time),up,down));
                     if(samples.size()>1)summary.append(String.format(Locale.getDefault(),
                         "\nИзменение уровня за период: %+.1f л",newest.level-samples.get(0).level));
-                    if(estimate!=null)summary.append("\n"+estimate);
+                    summary.append("\n"+estimate);
                     if(capacity>0){
                         int percent=(int)Math.min(100,Math.round(newest.litres/capacity*100));
                         gauge.setVisibility(View.VISIBLE);gauge.setProgress(percent);
@@ -173,30 +173,37 @@ public final class FuelActivity extends Activity {
             }
         });
     }
-    private String estimate(List<Sample> samples){
-        if(samples.size()<6)return null;
-        TripStore.TripSpan trip;
+    private String estimate(List<Sample> samples,long from,long until){
+        double total=0,covered=0,litres=0;
+        int count=0;
         try(TripStore trips=new TripStore(this)){
-            trip=trips.latestLongTrip(samples.get(0).time,samples.get(samples.size()-1).time);
+            for(TripStore.TripSpan trip:trips.tripsInPeriod(from,until)){
+                total+=trip.meters;
+                if(trip.end==0||trip.meters<20000)continue;
+                double used=estimateTrip(samples,trip);
+                if(Double.isFinite(used)){litres+=used;covered+=trip.meters;count++;}
+            }
         }
-        if(trip==null)return null;
+        String distance=String.format(Locale.getDefault(),"GPS за период: %.1f км",total/1000);
+        if(count==0)return distance+" · данных для оценки расхода пока мало";
+        return distance+String.format(Locale.getDefault(),
+            "\nОценка (%d поезд.): %.1f л за %.1f км · %.1f л/100 км",
+            count,litres,covered/1000,litres*100000/covered);
+    }
+    private double estimateTrip(List<Sample> samples,TripStore.TripSpan trip){
         Sample start=null,end=null,previous=null;
         for(Sample sample:samples){
             if(sample.time<=trip.start){
                 start=sample;
             }else if(sample.time<=trip.end+60000){
-                if(sample.gap || (previous!=null&&Math.abs(sample.level-previous.level)>=4))return null;
+                if(sample.gap || (previous!=null&&Math.abs(sample.level-previous.level)>=4))return Double.NaN;
                 if(sample.time>=trip.end){end=sample;break;}
-            }
+            }else break;
             previous=sample;
         }
-        if(start==null||end==null||!start.stable||!end.stable||trip.start-start.time>60000)return null;
-        double used=start.level-end.level,km=trip.meters/1000;
-        double consumption=100*used/km;
-        if(used<2||consumption>40)return null;
-        return String.format(Locale.getDefault(),
-            "Оценка последней подходящей GPS-поездки: %.1f км · %.1f л · %.1f л/100 км",
-            km,used,consumption);
+        if(start==null||end==null||!start.stable||!end.stable||trip.start-start.time>60000)return Double.NaN;
+        double used=start.level-end.level;
+        return used>=2&&used*100000/trip.meters<=40?used:Double.NaN;
     }
     private void editCalibration(){
         String key=SOURCES[source];
@@ -241,11 +248,12 @@ public final class FuelActivity extends Activity {
     }
     private final class Plot extends View {
         List<Sample> samples=new ArrayList<>();
+        Sample selected;
         private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG);
         Plot(){super(FuelActivity.this);setContentDescription("История уровня топлива");}
         private float x(Sample point){
             long first=samples.get(0).time,last=samples.get(samples.size()-1).time;
-            return 12+(getWidth()-24)*((float)(point.time-first)/Math.max(1,last-first));
+            return 44+Math.max(1,getWidth()-56)*((float)(point.time-first)/Math.max(1,last-first));
         }
         @Override protected void onDraw(Canvas canvas){
             canvas.drawColor(0xffeef3f8);
@@ -253,23 +261,45 @@ public final class FuelActivity extends Activity {
             double max=1;
             for(Sample point:samples)max=Math.max(max,point.level);
             Sample previous=null;
-            float height=Math.max(1,getHeight()-24);
+            float height=Math.max(1,getHeight()-48);
+            paint.setTextSize(13*getResources().getDisplayMetrics().scaledDensity);
+            paint.setStrokeWidth(1f);
+            paint.setColor(0xff526c87);
+            for(int i=0;i<=4;i++){
+                float y=18+height*i/4;
+                canvas.drawText(String.format(Locale.getDefault(),"%.0f",max*(4-i)/4),4,y+4,paint);
+                canvas.drawLine(44,y,getWidth()-12,y,paint);
+            }
+            java.text.DateFormat day=new java.text.SimpleDateFormat("dd.MM",Locale.getDefault());
+            String first=day.format(new Date(samples.get(0).time));
+            String last=day.format(new Date(samples.get(samples.size()-1).time));
+            canvas.drawText(first,44,getHeight()-8,paint);
+            if(!first.equals(last))canvas.drawText(last,getWidth()-12-paint.measureText(last),getHeight()-8,paint);
             paint.setColor(0xff245ab3);paint.setStrokeWidth(3f);
             for(Sample point:samples){
-                float y=12+height*(float)(1-point.level/max);
+                float y=18+height*(float)(1-point.level/max);
                 if(previous==null||point.gap)canvas.drawCircle(x(point),y,3,paint);
-                else canvas.drawLine(x(previous),12+height*(float)(1-previous.level/max),x(point),y,paint);
+                else canvas.drawLine(x(previous),18+height*(float)(1-previous.level/max),x(point),y,paint);
                 previous=point;
+            }
+            if(selected!=null){
+                float sx=x(selected),sy=18+height*(float)(1-selected.level/max);
+                paint.setStrokeWidth(1f);
+                canvas.drawLine(sx,18,sx,18+height,paint);
+                canvas.drawCircle(sx,sy,6,paint);
             }
         }
         @Override public boolean performClick(){super.performClick();return true;}
         @Override public boolean onTouchEvent(MotionEvent event){
-            if(event.getAction()!=MotionEvent.ACTION_UP||samples.isEmpty())return true;
+            int action=event.getActionMasked();
+            if(samples.isEmpty()||(action!=MotionEvent.ACTION_DOWN&&action!=MotionEvent.ACTION_MOVE&&
+                action!=MotionEvent.ACTION_UP))return true;
             Sample best=samples.get(0);
             for(Sample point:samples)if(Math.abs(x(point)-event.getX())<Math.abs(x(best)-event.getX()))best=point;
+            selected=best;invalidate();
             selection.setText(String.format(Locale.getDefault(),
                 "%s · сырое %.2f · %.1f л · сглаженное %.1f л",date(best.time),best.raw,best.litres,best.level));
-            return performClick();
+            return action!=MotionEvent.ACTION_UP||performClick();
         }
     }
 }
